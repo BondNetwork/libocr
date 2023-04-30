@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
-
 import "./AccessControllerInterface.sol";
 import "./AggregatorV2V3Interface.sol";
 import "./AggregatorValidatorInterface.sol";
@@ -39,12 +38,18 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   }
   HotVars internal s_hotVars;
 
+  struct MerkelAnswer {
+    bytes32 merkleRoot;
+    uint256 batchId;
+  }
   // Transmission records the median answer from the transmit transaction at
   // time timestamp
   struct Transmission {
-    int192 answer; // 192 bits ought to be enough for anyone
+    //int192 answer; // 192 bits ought to be enough for anyone
+    MerkelAnswer merkelAnswer;
     uint64 timestamp;
   }
+
   mapping(uint32 /* aggregator round ID */ => Transmission) internal s_transmissions;
 
   // incremented each time a new config is posted. This count is incorporated
@@ -57,6 +62,8 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   int192 immutable public minAnswer;
   // Highest answer the system is allowed to report in response to transmissions
   int192 immutable public maxAnswer;
+
+  bool internal s_lock;
 
   /*
    * @param _maximumGasPrice highest gas price for which transmitter will be compensated
@@ -332,7 +339,8 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
 
   function validateAnswer(
     uint32 _aggregatorRoundId,
-    int256 _answer
+    bytes32 _answer,
+    uint256 _batchId
   )
     private
   {
@@ -343,17 +351,19 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     }
 
     uint32 prevAggregatorRoundId = _aggregatorRoundId - 1;
-    int256 prevAggregatorRoundAnswer = s_transmissions[prevAggregatorRoundId].answer;
+    MerkelAnswer memory prevAggregatorRoundAnswer = s_transmissions[prevAggregatorRoundId].merkelAnswer;
     require(
       callWithExactGasEvenIfTargetIsNoContract(
         vc.gasLimit,
         address(vc.validator),
         abi.encodeWithSignature(
-          "validate(uint256,int256,uint256,int256)",
+          "validate(uint256,bytes32,uint256,int256,bytes32,uint256)",
           uint256(prevAggregatorRoundId),
-          prevAggregatorRoundAnswer,
+          prevAggregatorRoundAnswer.merkleRoot,
+          prevAggregatorRoundAnswer.batchId,
           uint256(_aggregatorRoundId),
-          _answer
+          _answer,
+          _batchId
         )
       ),
       "insufficient gas"
@@ -472,16 +482,21 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   /**
    * @notice indicates that a new report was transmitted
    * @param aggregatorRoundId the round to which this report was assigned
-   * @param answer median of the observations attached this report
+   * @param answerRoot answerRoot of the observations attached this report
+   * @param batchId batchId of the observations attached this report
    * @param transmitter address from which the report was transmitted
-   * @param observations observations transmitted with this report
+   * @param observationsRoot observations transmitted with this report
+   * @param observationsBatchId observations transmitted with this report
+   * @param observers observers transmitted with this report
    * @param rawReportContext signature-replay-prevention domain-separation tag
    */
   event NewTransmission(
     uint32 indexed aggregatorRoundId,
-    int192 answer,
+    bytes32 answerRoot,
+    uint256 batchId,
     address transmitter,
-    int192[] observations,
+    bytes32[] observationsRoot,
+    uint256[] observationsBatchId,
     bytes observers,
     bytes32 rawReportContext
   );
@@ -494,18 +509,20 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     returns (
       bytes32 rawReportContext,
       bytes32 rawObservers,
-      int192[] memory observations
+      bytes32[] memory observationsRoot,
+      uint256[] memory observationsBathId
     )
   {
-    (rawReportContext, rawObservers, observations) = abi.decode(_report,
-      (bytes32, bytes32, int192[]));
+    (rawReportContext, rawObservers, observationsRoot, observationsBathId) = abi.decode(_report,
+      (bytes32, bytes32, bytes32[],uint256[]));
   }
 
   // Used to relieve stack pressure in transmit
   struct ReportData {
     HotVars hotVars; // Only read from storage once
     bytes observers; // ith element is the index of the ith observer
-    int192[] observations; // ith element is the ith observation
+    bytes32[] observationsRoot; // ith element is the ith observation
+    uint256[] observationsBatchId; // ith element is the ith observation
     bytes vs; // jth element is the v component of the jth signature
     bytes32 rawReportContext;
   }
@@ -535,7 +552,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       s_hotVars.latestConfigDigest,
       uint32(s_hotVars.latestEpochAndRound >> 8),
       uint8(s_hotVars.latestEpochAndRound),
-      s_transmissions[s_hotVars.latestAggregatorRoundId].answer,
+      1,
       s_transmissions[s_hotVars.latestAggregatorRoundId].timestamp
     );
   }
@@ -596,8 +613,8 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       r.hotVars = s_hotVars; // cache read from storage
 
       bytes32 rawObservers;
-      (r.rawReportContext, rawObservers, r.observations) = abi.decode(
-        _report, (bytes32, bytes32, int192[])
+      (r.rawReportContext, rawObservers, r.observationsRoot, r.observationsBatchId) = abi.decode(
+        _report, (bytes32, bytes32, bytes32[],uint256[])
       );
 
       // rawReportContext consists of:
@@ -625,9 +642,9 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       require(_rs.length > r.hotVars.threshold, "not enough signatures");
       require(_rs.length <= maxNumOracles, "too many signatures");
       require(_ss.length == _rs.length, "signatures out of registration");
-      require(r.observations.length <= maxNumOracles,
+      require(r.observationsRoot.length <= maxNumOracles,
               "num observations out of bounds");
-      require(r.observations.length > 2 * r.hotVars.threshold,
+      require(r.observationsRoot.length > 2 * r.hotVars.threshold,
               "too few values to trust median");
 
       // Copy signature parities in bytes32 _rawVs to bytes r.v
@@ -637,9 +654,9 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       }
 
       // Copy observer identities in bytes32 rawObservers to bytes r.observers
-      r.observers = new bytes(r.observations.length);
+      r.observers = new bytes(r.observationsRoot.length);
       bool[maxNumOracles] memory seen;
-      for (uint8 i = 0; i < r.observations.length; i++) {
+      for (uint8 i = 0; i < r.observationsRoot.length; i++) {
         uint8 observerIdx = uint8(rawObservers[i]);
         require(!seen[observerIdx], "observer index repeated");
         seen[observerIdx] = true;
@@ -672,22 +689,26 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     }
 
     { // Check the report contents, and record the result
-      for (uint i = 0; i < r.observations.length - 1; i++) {
-        bool inOrder = r.observations[i] <= r.observations[i+1];
+      for (uint i = 0; i < r.observationsRoot.length - 1; i++) {
+        bool inOrder = r.observationsRoot[i] <= r.observationsRoot[i+1];
         require(inOrder, "observations not sorted");
       }
 
-      int192 median = r.observations[r.observations.length/2];
-      require(minAnswer <= median && median <= maxAnswer, "median is out of min-max range");
+      bytes32 root = r.observationsRoot[r.observationsRoot.length/2];
+      uint256 batchId = r.observationsBatchId[r.observationsBatchId.length/2];
+
+      //require(minAnswer <= median && median <= maxAnswer, "median is out of min-max range");
       r.hotVars.latestAggregatorRoundId++;
       s_transmissions[r.hotVars.latestAggregatorRoundId] =
-        Transmission(median, uint64(block.timestamp));
+        Transmission(MerkelAnswer(root, batchId), uint64(block.timestamp));
 
       emit NewTransmission(
         r.hotVars.latestAggregatorRoundId,
-        median,
+        root,
+        batchId,
         msg.sender,
-        r.observations,
+        r.observationsRoot,
+        r.observationsBatchId,
         r.observers,
         r.rawReportContext
       );
@@ -699,12 +720,13 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
         block.timestamp
       );
       emit AnswerUpdated(
-        median,
+        root,
+        batchId,
         r.hotVars.latestAggregatorRoundId,
         block.timestamp
       );
 
-      validateAnswer(r.hotVars.latestAggregatorRoundId, median);
+      validateAnswer(r.hotVars.latestAggregatorRoundId, root, batchId);
     }
     s_hotVars = r.hotVars;
     assert(initialGas < maxUint32);
@@ -725,7 +747,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     virtual
     returns (int256)
   {
-    return s_transmissions[s_hotVars.latestAggregatorRoundId].answer;
+    return 1;
   }
 
   /**
@@ -766,7 +788,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     returns (int256)
   {
     if (_roundId > 0xFFFFFFFF) { return 0; }
-    return s_transmissions[uint32(_roundId)].answer;
+    return 1;
   }
 
   /**
@@ -841,7 +863,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     Transmission memory transmission = s_transmissions[uint32(_roundId)];
     return (
       _roundId,
-      transmission.answer,
+      1,
       transmission.timestamp,
       transmission.timestamp,
       _roundId
@@ -877,10 +899,49 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     Transmission memory transmission = s_transmissions[uint32(roundId)];
     return (
       roundId,
-      transmission.answer,
+      1,
       transmission.timestamp,
       transmission.timestamp,
       roundId
+    );
+  }
+
+  function isLocked()
+  external
+  override
+  view
+  virtual
+  returns (bool)
+  {
+    return s_lock;
+  }
+
+  function setLock(bool isLock) external override virtual
+  {
+    s_lock = isLock;
+  }
+
+  function latestMerkleRoundData()
+  external
+  override
+  view
+  virtual
+  returns (
+    uint80 roundId,
+    uint256 batchId,
+    bytes32 merkelAnswer,
+    uint256 startedAt,
+    uint256 updatedAt
+  )
+  {
+    roundId = s_hotVars.latestAggregatorRoundId;
+    Transmission memory transmission = s_transmissions[uint32(roundId)];
+    return (
+      roundId,
+      transmission.merkelAnswer.batchId,
+      transmission.merkelAnswer.merkleRoot,
+      transmission.timestamp,
+      transmission.timestamp
     );
   }
 }

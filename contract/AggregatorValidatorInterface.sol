@@ -4,8 +4,10 @@ pragma solidity ^0.7.0;
 interface AggregatorValidatorInterface {
   function validate(
     uint256 previousRoundId,
-    int256 previousAnswer,
+    bytes32 previousAnswer,
+    uint256  previousBatchId,
     uint256 currentRoundId,
-    int256 currentAnswer
+    bytes32 currentAnswer,
+    uint256 currentBatchId
   ) external returns (bool);
 }
