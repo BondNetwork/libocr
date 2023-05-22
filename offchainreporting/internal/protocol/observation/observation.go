@@ -23,7 +23,12 @@ type Observations []Observation
 var i = big.NewInt
 
 // Bounds on an ethereum int192
-const byteWidth = 24
+//const byteWidth = 24
+//const bitWidth = byteWidth * 8
+
+// root = 32 bytes
+// batchId = 32 bytes
+const byteWidth = 64
 const bitWidth = byteWidth * 8
 
 var MaxObservation = i(0).Sub(i(0).Lsh(i(1), bitWidth-1), i(1)) // 2**191 - 1
@@ -55,6 +60,26 @@ func (o Observation) Less(o2 Observation) bool { return o.v.Cmp(o2.v) < 0 }
 func (o Observation) IsMissingValue() bool { return o.v == nil }
 
 func (o Observation) GoEthereumValue() *big.Int { return o.v }
+
+func (o Observation) GoEthereumValueRoot() *big.Int {
+	data := o.v.Bytes()
+	var res *big.Int
+	if len(data) == 64 {
+		res = new(big.Int)
+		res.SetBytes(data[0:32])
+	}
+	return res
+}
+
+func (o Observation) GoEthereumValueBatchId() *big.Int {
+	data := o.v.Bytes()
+	var res *big.Int
+	if len(data) == 64 {
+		res = new(big.Int)
+		res.SetBytes(data[32:])
+	}
+	return res
+}
 
 func (o Observation) Deviates(old Observation, thresholdPPB uint64) bool {
 	if old.v.Cmp(i(0)) == 0 {

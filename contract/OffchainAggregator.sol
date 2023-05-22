@@ -616,7 +616,6 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       (r.rawReportContext, rawObservers, r.observationsRoot, r.observationsBatchId) = abi.decode(
         _report, (bytes32, bytes32, bytes32[],uint256[])
       );
-
       // rawReportContext consists of:
       // 11-byte zero padding
       // 16-byte configDigest

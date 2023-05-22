@@ -74,6 +74,20 @@ func (aos AttributedObservations) onChainObservations() (rv []*big.Int) {
 	return rv
 }
 
+func (aos AttributedObservations) onChainObservationsRoot() (rv []*big.Int) {
+	for _, ao := range aos {
+		rv = append(rv, ao.Observation.GoEthereumValueRoot())
+	}
+	return rv
+}
+
+func (aos AttributedObservations) onChainObservationsBatchId() (rv []*big.Int) {
+	for _, ao := range aos {
+		rv = append(rv, ao.Observation.GoEthereumValueBatchId())
+	}
+	return rv
+}
+
 // OnChainReport returns the serialized report which is transmitted to the
 // onchain contract, and signed by participating oracles using their onchain
 // identities
@@ -82,7 +96,7 @@ func (aos AttributedObservations) OnChainReport(repctx ReportContext) ([]byte, e
 	if err != nil {
 		return nil, errors.Wrapf(err, "while collating observers for onChainReport")
 	}
-	return reportTypes.Pack(repctx.DomainSeparationTag(), observers, aos.onChainObservations())
+	return reportTypes.Pack(repctx.DomainSeparationTag(), observers, aos.onChainObservationsRoot(), aos.onChainObservationsBatchId())
 }
 
 // AttestedReportOne is the collated report oracles sign off on, after they've
@@ -206,6 +220,7 @@ func getReportTypes() abi.Arguments {
 	return abi.Arguments([]abi.Argument{
 		{Name: "rawReportContext", Type: mustNewType("bytes32")},
 		{Name: "rawObservers", Type: mustNewType("bytes32")},
-		{Name: "observations", Type: mustNewType("int192[]")},
+		{Name: "observationsRoot", Type: mustNewType("bytes32[]")},
+		{Name: "observationsBatchId", Type: mustNewType("uint256[]")},
 	})
 }
