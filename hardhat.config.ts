@@ -1,7 +1,16 @@
+import '@nomiclabs/hardhat-ethers'
+import '@nomiclabs/hardhat-etherscan'
+import '@nomiclabs/hardhat-waffle'
+import '@openzeppelin/hardhat-upgrades'
+import '@typechain/hardhat'
+import 'hardhat-abi-exporter'
+import 'hardhat-contract-sizer'
+import 'solidity-coverage'
+
 const COMPILER_SETTINGS = {
   optimizer: {
     enabled: true,
-    runs: 1000000,
+    runs: 100,
   },
   metadata: {
     bytecodeHash: 'none',
@@ -11,8 +20,7 @@ const COMPILER_SETTINGS = {
 /**
  * @type import('hardhat/config').HardhatUserConfig
  */
-
-module.exports = {
+export default {
   abiExporter: {
     path: './abi',
   },
@@ -27,7 +35,12 @@ module.exports = {
     target: 'ethers-v5',
   },
   networks: {
-    hardhat: {},
+    hardhat: {
+    },
+    localhost: {
+      url: "http://127.0.0.1:8545",
+      chainId: 31337
+    }
   },
   solidity: {
     compilers: [
@@ -55,10 +68,6 @@ module.exports = {
         version: '0.8.15',
         settings: COMPILER_SETTINGS,
       },
-      {
-        version: '0.8.18',
-        settings: COMPILER_SETTINGS,
-      },
     ],
   },
   contractSizer: {
@@ -70,4 +79,4 @@ module.exports = {
     timeout: 100000,
     forbidOnly: Boolean(process.env.CI),
   },
-};
+}

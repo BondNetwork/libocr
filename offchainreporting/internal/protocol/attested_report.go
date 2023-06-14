@@ -74,7 +74,7 @@ func (aos AttributedObservations) onChainObservations() (rv []*big.Int) {
 	return rv
 }
 
-func (aos AttributedObservations) onChainObservationsRoot() (rv []*big.Int) {
+func (aos AttributedObservations) onChainObservationsRoot() (rv [][32]byte) {
 	for _, ao := range aos {
 		rv = append(rv, ao.Observation.GoEthereumValueRoot())
 	}
