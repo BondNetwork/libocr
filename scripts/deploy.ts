@@ -7,7 +7,7 @@ async function main() {
     const OffchainAggregator = await ethers.getContractFactory("AccessControlledOffchainAggregator");
     const tx = await OffchainAggregator.deploy('2000','1000',
     '102829','6000','3000',
-    "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853", 1,
+    "0x6c51561c4F5e4ba30209732FF7499a1e4AdE052e", 1,
         '95780971304118053647396689196894323976171195136475135',
         "0x0000000000000000000000000000000000000000",
         "0x0000000000000000000000000000000000000000",
