@@ -31,8 +31,8 @@ var i = big.NewInt
 const byteWidth = 64
 const bitWidth = byteWidth * 8
 
-var MaxObservation = i(0).Sub(i(0).Lsh(i(1), bitWidth-1), i(1)) // 2**191 - 1
-var MinObservation = i(0).Sub(i(0).Neg(MaxObservation), i(1))   // -2**191
+var MaxObservation = i(0).Sub(i(0).Lsh(i(1), bitWidth-1), i(1)) // 2**512 - 1
+var MinObservation = i(0).Sub(i(0).Neg(MaxObservation), i(1))   // -2**512
 
 func tooLarge(o *big.Int) error {
 	return errors.Errorf("value won't fit in int%v: 0x%x", bitWidth, o)
@@ -60,6 +60,28 @@ func (o Observation) Less(o2 Observation) bool { return o.v.Cmp(o2.v) < 0 }
 func (o Observation) IsMissingValue() bool { return o.v == nil }
 
 func (o Observation) GoEthereumValue() *big.Int { return o.v }
+
+func (o Observation) GoEthereumValueRoot() [32]byte {
+	data := o.v.Bytes()
+	var res [32]byte
+	if len(data) >= 32 {
+		s := data[len(data)-32 : len(data)]
+		copy(res[:], s)
+		fmt.Printf("GoEthereumValueRoot_res:%x, len:%d\n", res, len(res))
+	}
+	return res
+}
+
+func (o Observation) GoEthereumValueBatchId() *big.Int {
+	data := o.v.Bytes()
+	var res = new(big.Int)
+	res.SetInt64(0)
+	if len(data) > 32 {
+		res.SetBytes(data[0 : len(data)-32])
+		fmt.Printf("GoEthereumValueBatchId_res:%x, len:%d\n", res.Bytes(), len(res.Bytes()))
+	}
+	return res
+}
 
 func (o Observation) Deviates(old Observation, thresholdPPB uint64) bool {
 	if old.v.Cmp(i(0)) == 0 {
