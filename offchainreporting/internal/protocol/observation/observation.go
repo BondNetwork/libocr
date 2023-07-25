@@ -84,7 +84,7 @@ func (o Observation) GoEthereumValueBatchId() *big.Int {
 }
 
 func (o Observation) Deviates(old Observation, thresholdPPB uint64) bool {
-	if old.v.Cmp(i(0)) == 0 {
+	/*if old.v.Cmp(i(0)) == 0 {
 		//nolint:gosimple
 		if o.v.Cmp(i(0)) == 0 {
 			return false // Both values are zero; no deviation
@@ -100,7 +100,7 @@ func (o Observation) Deviates(old Observation, thresholdPPB uint64) bool {
 		(&big.Int{}).SetUint64(thresholdPPB),
 		(&big.Int{}).SetUint64(1000000000),
 	)
-	return change.Cmp(threshold) >= 0
+	return change.Cmp(threshold) >= 0*/
 }
 
 // Bytes returns the twos-complement representation of o
