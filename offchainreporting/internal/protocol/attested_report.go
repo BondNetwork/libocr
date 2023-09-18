@@ -74,7 +74,7 @@ func (aos AttributedObservations) onChainObservations() (rv []*big.Int) {
 	return rv
 }
 
-func (aos AttributedObservations) onChainObservationsRoot() (rv [][32]byte) {
+func (aos AttributedObservations) onChainObservationsRoot() (rv [][]byte) {
 	for _, ao := range aos {
 		rv = append(rv, ao.Observation.GoEthereumValueRoot())
 	}
@@ -220,7 +220,7 @@ func getReportTypes() abi.Arguments {
 	return abi.Arguments([]abi.Argument{
 		{Name: "rawReportContext", Type: mustNewType("bytes32")},
 		{Name: "rawObservers", Type: mustNewType("bytes32")},
-		{Name: "observationsRoot", Type: mustNewType("bytes32[]")},
+		{Name: "observationsRoot", Type: mustNewType("bytes[]")},
 		{Name: "observationsBatchId", Type: mustNewType("uint256[]")},
 	})
 }

@@ -26,9 +26,7 @@ var i = big.NewInt
 //const byteWidth = 24
 //const bitWidth = byteWidth * 8
 
-// root = 32 bytes
-// batchId = 32 bytes
-const byteWidth = 64
+const byteWidth = 3200
 const bitWidth = byteWidth * 8
 
 var MaxObservation = i(0).Sub(i(0).Lsh(i(1), bitWidth-1), i(1)) // 2**512 - 1
@@ -61,23 +59,22 @@ func (o Observation) IsMissingValue() bool { return o.v == nil }
 
 func (o Observation) GoEthereumValue() *big.Int { return o.v }
 
-func (o Observation) GoEthereumValueRoot() [32]byte {
+func (o Observation) GoEthereumValueRoot() []byte {
 	data := o.v.Bytes()
-	var res [32]byte
-	if len(data) >= 32 {
-		s := data[len(data)-32 : len(data)]
-		copy(res[:], s)
-		fmt.Printf("GoEthereumValueRoot_res:%x, len:%d\n", res, len(res))
+	var buffer bytes.Buffer
+	if len(data) > 33 {
+		s := data[33:]
+		buffer.Write(s)
+		fmt.Printf("GoEthereumValueRoot_res:%x, len:%d\n", buffer.Bytes(), len(buffer.Bytes()))
 	}
-	return res
+	return buffer.Bytes()
 }
 
 func (o Observation) GoEthereumValueBatchId() *big.Int {
 	data := o.v.Bytes()
 	var res = new(big.Int)
-	res.SetInt64(0)
-	if len(data) > 32 {
-		res.SetBytes(data[0 : len(data)-32])
+	if len(data) > 33 {
+		res.SetBytes(data[1:33])
 		fmt.Printf("GoEthereumValueBatchId_res:%x, len:%d\n", res.Bytes(), len(res.Bytes()))
 	}
 	return res

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
+
+//pragma abicoder v2;
+
 import "./AccessControllerInterface.sol";
 import "./AggregatorV2V3Interface.sol";
 import "./AggregatorValidatorInterface.sol";

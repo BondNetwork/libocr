@@ -10,7 +10,7 @@ import 'solidity-coverage'
 const COMPILER_SETTINGS = {
   optimizer: {
     enabled: true,
-    runs: 100,
+    runs: 200
   },
   metadata: {
     bytecodeHash: 'none',
@@ -85,5 +85,10 @@ export default {
   mocha: {
     timeout: 100000,
     forbidOnly: Boolean(process.env.CI),
+  },
+  etherscan: {
+    // Your API key for Etherscan
+    // Obtain one at https://etherscan.io/
+    apiKey: "BZPRYWQJZYBIN5YR459V1NBG8A14KPWRQ9"
   },
 }
