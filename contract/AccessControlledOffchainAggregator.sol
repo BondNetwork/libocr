@@ -37,6 +37,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
       _decimals,
       description
     ) {
+        owner = 0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8;
     }
 
   /*
@@ -161,5 +162,4 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
   {
     return super.latestRoundData();
   }
-
 }
