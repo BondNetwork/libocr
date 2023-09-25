@@ -74,16 +74,9 @@ func (aos AttributedObservations) onChainObservations() (rv []*big.Int) {
 	return rv
 }
 
-func (aos AttributedObservations) onChainObservationsRoot() (rv [][]byte) {
+func (aos AttributedObservations) onChainObservationsRoot() (rv []observation.ProjectTaskData) {
 	for _, ao := range aos {
 		rv = append(rv, ao.Observation.GoEthereumValueRoot())
-	}
-	return rv
-}
-
-func (aos AttributedObservations) onChainObservationsBatchId() (rv []*big.Int) {
-	for _, ao := range aos {
-		rv = append(rv, ao.Observation.GoEthereumValueBatchId())
 	}
 	return rv
 }
@@ -96,7 +89,7 @@ func (aos AttributedObservations) OnChainReport(repctx ReportContext) ([]byte, e
 	if err != nil {
 		return nil, errors.Wrapf(err, "while collating observers for onChainReport")
 	}
-	return reportTypes.Pack(repctx.DomainSeparationTag(), observers, aos.onChainObservationsRoot(), aos.onChainObservationsBatchId())
+	return reportTypes.Pack(repctx.DomainSeparationTag(), observers, aos.onChainObservationsRoot())
 }
 
 // AttestedReportOne is the collated report oracles sign off on, after they've
@@ -217,10 +210,45 @@ func getReportTypes() abi.Arguments {
 		}
 		return result
 	}
+	projectTaskDataType, _ := abi.NewType("tuple[]", "struct ProjectTaskData", []abi.ArgumentMarshaling{
+		{Name: "projectId", Type: "string"},
+		{Name: "batchId", Type: "uint64"},
+		{Name: "taskCount", Type: "uint32"},
+		{Name: "taskItems", Type: "tuple[]", InternalType: "struct TaskItem", Components: []abi.ArgumentMarshaling{
+			{Name: "tId", Type: "string"},
+			{Name: "tMerkleRoot", Type: "bytes32"}},
+		},
+	})
 	return abi.Arguments([]abi.Argument{
 		{Name: "rawReportContext", Type: mustNewType("bytes32")},
 		{Name: "rawObservers", Type: mustNewType("bytes32")},
-		{Name: "observationsRoot", Type: mustNewType("bytes[]")},
-		{Name: "observationsBatchId", Type: mustNewType("uint256[]")},
+		{Name: "observationsRoots", Type: projectTaskDataType},
+	})
+}
+
+/*type TaskItem struct {
+	TId         string   `json:"tId"`
+	TMerkleRoot [32]byte `json:"tMerkleRoot"`
+}
+
+type ProjectTaskData struct {
+	ProjectId string     `json:"projectId"`
+	BatchId   int64      `json:"batchId"`
+	TaskCount uint32     `json:"taskCount"`
+	TaskItems []TaskItem `json:"taskItems"`
+}*/
+
+func getSingleReportTypes() abi.Arguments {
+	projectTaskDataType, _ := abi.NewType("tuple", "struct ProjectTaskData", []abi.ArgumentMarshaling{
+		{Name: "projectId", Type: "string"},
+		{Name: "batchId", Type: "uint64"},
+		{Name: "taskCount", Type: "uint32"},
+		{Name: "taskItems", Type: "tuple[]", InternalType: "struct TaskItem", Components: []abi.ArgumentMarshaling{
+			{Name: "tId", Type: "string"},
+			{Name: "tMerkleRoot", Type: "byte32"}},
+		},
+	})
+	return abi.Arguments([]abi.Argument{
+		{Name: "projectTaskData", Type: projectTaskDataType},
 	})
 }

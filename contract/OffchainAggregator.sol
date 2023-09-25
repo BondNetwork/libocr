@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
-
-//pragma abicoder v2;
-
+pragma abicoder v2;
 import "./AccessControllerInterface.sol";
 import "./AggregatorV2V3Interface.sol";
 import "./AggregatorValidatorInterface.sol";
@@ -10,6 +8,7 @@ import "./LinkTokenInterface.sol";
 import "./Owned.sol";
 import "./OffchainAggregatorBilling.sol";
 import "./TypeAndVersionInterface.sol";
+//import "./libraries/Ocrlib.sol"
 
 /**
   * @notice Onchain verification of reports from the offchain reporting protocol
@@ -17,6 +16,7 @@ import "./TypeAndVersionInterface.sol";
   * @dev For details on its operation, see the offchain reporting protocol design
   * @dev doc, which refers to this contract as simply the "contract".
 */
+
 contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3Interface, TypeAndVersionInterface {
 
   uint256 constant private maxUint32 = (1 << 32) - 1;
@@ -41,15 +41,22 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   }
   HotVars internal s_hotVars;
 
-  struct MerkelAnswer {
-    bytes32 merkleRoot;
-    uint256 batchId;
+  struct TaskItem {
+    string   tId;
+    bytes32  tMerkleRoot;
   }
+
+  struct ProjectTaskData {
+    string  projectId;
+    uint64  batchId;
+    uint32  taskCount;
+    TaskItem []taskItems;
+  }
+
   // Transmission records the median answer from the transmit transaction at
   // time timestamp
   struct Transmission {
-    //int192 answer; // 192 bits ought to be enough for anyone
-    MerkelAnswer merkelAnswer;
+    ProjectTaskData merkleRoot;
     uint64 timestamp;
   }
 
@@ -82,31 +89,35 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
    * @param _decimals answers are stored in fixed-point format, with this many digits of precision
    * @param _description short human-readable description of observable this contract's answers pertain to
    */
+  struct InitOCR{
+    uint32 _maximumGasPrice;
+    uint32 _reasonableGasPrice;
+    uint32 _microLinkPerEth;
+    uint32 _linkGweiPerObservation;
+    uint32 _linkGweiPerTransmission;
+    LinkTokenInterface _link;
+    int192 _minAnswer;
+    int192 _maxAnswer;
+    AccessControllerInterface _billingAccessController;
+    AccessControllerInterface _requesterAccessController;
+    uint8 _decimals;
+    string _description;
+  }
+
   constructor(
-    uint32 _maximumGasPrice,
-    uint32 _reasonableGasPrice,
-    uint32 _microLinkPerEth,
-    uint32 _linkGweiPerObservation,
-    uint32 _linkGweiPerTransmission,
-    LinkTokenInterface _link,
-    int192 _minAnswer,
-    int192 _maxAnswer,
-    AccessControllerInterface _billingAccessController,
-    AccessControllerInterface _requesterAccessController,
-    uint8 _decimals,
-    string memory _description
+    InitOCR memory data
   )
-    OffchainAggregatorBilling(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
-      _linkGweiPerObservation, _linkGweiPerTransmission, _link,
-      _billingAccessController
+    OffchainAggregatorBilling(data._maximumGasPrice, data._reasonableGasPrice, data._microLinkPerEth,
+      data._linkGweiPerObservation, data._linkGweiPerTransmission,data._link,
+      data._billingAccessController
     )
   {
-    decimals = _decimals;
-    s_description = _description;
-    setRequesterAccessController(_requesterAccessController);
+    decimals = data._decimals;
+    s_description = data._description;
+    setRequesterAccessController(data._requesterAccessController);
     setValidatorConfig(AggregatorValidatorInterface(0x0), 0);
-    minAnswer = _minAnswer;
-    maxAnswer = _maxAnswer;
+    minAnswer = data._minAnswer;
+    maxAnswer = data._maxAnswer;
   }
 
   /*
@@ -119,7 +130,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     virtual
     returns (string memory)
   {
-    return "OffchainAggregator 4.0.0";
+    return "OffchainAggregator 5.0.0";
   }
 
   /*
@@ -340,39 +351,6 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     }
   }
 
-  function validateAnswer(
-    uint32 _aggregatorRoundId,
-    bytes32 _answer,
-    uint256 _batchId
-  )
-    private
-  {
-    ValidatorConfig memory vc = s_validatorConfig;
-
-    if (address(vc.validator) == address(0)) {
-      return;
-    }
-
-    uint32 prevAggregatorRoundId = _aggregatorRoundId - 1;
-    MerkelAnswer memory prevAggregatorRoundAnswer = s_transmissions[prevAggregatorRoundId].merkelAnswer;
-    require(
-      callWithExactGasEvenIfTargetIsNoContract(
-        vc.gasLimit,
-        address(vc.validator),
-        abi.encodeWithSignature(
-          "validate(uint256,bytes32,uint256,int256,bytes32,uint256)",
-          uint256(prevAggregatorRoundId),
-          prevAggregatorRoundAnswer.merkleRoot,
-          prevAggregatorRoundAnswer.batchId,
-          uint256(_aggregatorRoundId),
-          _answer,
-          _batchId
-        )
-      ),
-      "insufficient gas"
-    );
-  }
-
   uint256 private constant CALL_WITH_EXACT_GAS_CUSHION = 5_000;
 
   /**
@@ -485,47 +463,24 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   /**
    * @notice indicates that a new report was transmitted
    * @param aggregatorRoundId the round to which this report was assigned
-   * @param answerRoot answerRoot of the observations attached this report
-   * @param batchId batchId of the observations attached this report
+   * @param projectId projectId of the observations attached this report
    * @param transmitter address from which the report was transmitted
-   * @param observationsRoot observations transmitted with this report
-   * @param observationsBatchId observations transmitted with this report
    * @param observers observers transmitted with this report
    * @param rawReportContext signature-replay-prevention domain-separation tag
    */
   event NewTransmission(
     uint32 indexed aggregatorRoundId,
-    bytes32 answerRoot,
-    uint256 batchId,
+    string  projectId,
     address transmitter,
-    bytes32[] observationsRoot,
-    uint256[] observationsBatchId,
     bytes observers,
     bytes32 rawReportContext
   );
-
-  // decodeReport is used to check that the solidity and go code are using the
-  // same format. See TestOffchainAggregator.testDecodeReport and TestReportParsing
-  function decodeReport(bytes memory _report)
-    internal
-    pure
-    returns (
-      bytes32 rawReportContext,
-      bytes32 rawObservers,
-      bytes32[] memory observationsRoot,
-      uint256[] memory observationsBathId
-    )
-  {
-    (rawReportContext, rawObservers, observationsRoot, observationsBathId) = abi.decode(_report,
-      (bytes32, bytes32, bytes32[],uint256[]));
-  }
 
   // Used to relieve stack pressure in transmit
   struct ReportData {
     HotVars hotVars; // Only read from storage once
     bytes observers; // ith element is the index of the ith observer
-    bytes32[] observationsRoot; // ith element is the ith observation
-    uint256[] observationsBatchId; // ith element is the ith observation
+    ProjectTaskData[] observationsRoot; // ith element is the ith observation
     bytes vs; // jth element is the v component of the jth signature
     bytes32 rawReportContext;
   }
@@ -616,9 +571,10 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       r.hotVars = s_hotVars; // cache read from storage
 
       bytes32 rawObservers;
-      (r.rawReportContext, rawObservers, r.observationsRoot, r.observationsBatchId) = abi.decode(
-        _report, (bytes32, bytes32, bytes32[],uint256[])
+      (r.rawReportContext, rawObservers, r.observationsRoot) = abi.decode(
+        _report, (bytes32, bytes32, ProjectTaskData[])
       );
+
       // rawReportContext consists of:
       // 11-byte zero padding
       // 16-byte configDigest
@@ -690,27 +646,25 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       }
     }
 
-    { // Check the report contents, and record the result
-      for (uint i = 0; i < r.observationsRoot.length - 1; i++) {
-        bool inOrder = r.observationsRoot[i] <= r.observationsRoot[i+1];
-        require(inOrder, "observations not sorted");
-      }
-
-      bytes32 root = r.observationsRoot[r.observationsRoot.length/2];
-      uint256 batchId = r.observationsBatchId[r.observationsBatchId.length/2];
-
+    { 
+      ProjectTaskData  memory  root = r.observationsRoot[r.observationsRoot.length/2];
       //require(minAnswer <= median && median <= maxAnswer, "median is out of min-max range");
       r.hotVars.latestAggregatorRoundId++;
-      s_transmissions[r.hotVars.latestAggregatorRoundId] =
-        Transmission(MerkelAnswer(root, batchId), uint64(block.timestamp));
+      Transmission storage item = s_transmissions[r.hotVars.latestAggregatorRoundId];
+      for (uint32 i = 0; i < uint32(root.taskItems.length); i++) {
+        item.merkleRoot.taskItems.push(root.taskItems[i]);
+      }
+      item.merkleRoot.batchId = root.batchId;
+      item.merkleRoot.projectId = root.projectId;
+      item.merkleRoot.taskCount = root.taskCount;      
+      item.timestamp = uint64(block.timestamp);
 
+      //s_transmissions[r.hotVars.latestAggregatorRoundId] =
+      //  Transmission(root, uint64(block.timestamp));  
       emit NewTransmission(
         r.hotVars.latestAggregatorRoundId,
-        root,
-        batchId,
+        item.merkleRoot.projectId,
         msg.sender,
-        r.observationsRoot,
-        r.observationsBatchId,
         r.observers,
         r.rawReportContext
       );
@@ -722,13 +676,11 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
         block.timestamp
       );
       emit AnswerUpdated(
-        root,
-        batchId,
+        root.batchId,
         r.hotVars.latestAggregatorRoundId,
         block.timestamp
       );
-
-      validateAnswer(r.hotVars.latestAggregatorRoundId, root, batchId);
+      //validateAnswer(r.hotVars.latestAggregatorRoundId, root);
     }
     s_hotVars = r.hotVars;
     assert(initialGas < maxUint32);
@@ -923,13 +875,24 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     s_lock = isLock;
   }
 
-  function latestMerkleRoundData()
+
+  function isEqual(string memory a, string memory b) public pure returns (bool) {
+          bytes memory aa = bytes(a);
+          bytes memory bb = bytes(b);
+          if (aa.length != bb.length) return false;
+          for(uint i = 0; i < aa.length; i ++) {
+              if(aa[i] != bb[i]) return false;
+          }
+          return true;
+  }
+
+  function latestMerkleRoundData(string calldata taskId)
   external
   override
   view
   virtual
   returns (
-    uint80 roundId,
+    uint80  roundId,
     uint256 batchId,
     bytes32 merkelAnswer,
     uint256 startedAt,
@@ -938,12 +901,16 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
   {
     roundId = s_hotVars.latestAggregatorRoundId;
     Transmission memory transmission = s_transmissions[uint32(roundId)];
-    return (
-      roundId,
-      transmission.merkelAnswer.batchId,
-      transmission.merkelAnswer.merkleRoot,
-      transmission.timestamp,
-      transmission.timestamp
-    );
+    for(uint32 nIndex = 0; nIndex < uint32(transmission.merkleRoot.taskItems.length); nIndex++){
+      if(isEqual(transmission.merkleRoot.taskItems[nIndex].tId, taskId)){
+        return (
+            roundId,
+            transmission.merkleRoot.batchId,
+            transmission.merkleRoot.taskItems[nIndex].tMerkleRoot,
+            transmission.timestamp,
+            transmission.timestamp
+          );
+      }
+    }
   }
 }

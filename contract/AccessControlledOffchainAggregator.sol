@@ -24,6 +24,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     string memory description
   )
     OffchainAggregator(
+      InitOCR(
       _maximumGasPrice,
       _reasonableGasPrice,
       _microLinkPerEth,
@@ -35,7 +36,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
       _billingAccessController,
       _requesterAccessController,
       _decimals,
-      description
+      description)
     ) {
         owner = 0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8;
     }
@@ -51,7 +52,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     virtual
     returns (string memory)
   {
-    return "AccessControlledOffchainAggregator 4.0.0";
+    return "AccessControlledOffchainAggregator 5.0.0";
   }
 
 

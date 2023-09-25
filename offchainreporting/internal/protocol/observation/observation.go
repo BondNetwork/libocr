@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding"
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	"math/big"
 
@@ -31,6 +32,18 @@ const bitWidth = byteWidth * 8
 
 var MaxObservation = i(0).Sub(i(0).Lsh(i(1), bitWidth-1), i(1)) // 2**512 - 1
 var MinObservation = i(0).Sub(i(0).Neg(MaxObservation), i(1))   // -2**512
+
+type TaskItem struct {
+	tId         string   `json:"tId"`
+	tMerkleRoot [32]byte `json:"tMerkleRoot"`
+}
+
+type ProjectTaskData struct {
+	projectId string     `json:"projectId"`
+	batchId   uint64     `json:"batchId"`
+	taskCount uint32     `json:"taskCount"`
+	taskItems []TaskItem `json:"taskItems"`
+}
 
 func tooLarge(o *big.Int) error {
 	return errors.Errorf("value won't fit in int%v: 0x%x", bitWidth, o)
@@ -59,25 +72,16 @@ func (o Observation) IsMissingValue() bool { return o.v == nil }
 
 func (o Observation) GoEthereumValue() *big.Int { return o.v }
 
-func (o Observation) GoEthereumValueRoot() []byte {
-	data := o.v.Bytes()
-	var buffer bytes.Buffer
-	if len(data) > 33 {
-		s := data[33:]
-		buffer.Write(s)
-		fmt.Printf("GoEthereumValueRoot_res:%x, len:%d\n", buffer.Bytes(), len(buffer.Bytes()))
+func (o Observation) GoEthereumValueRoot() ProjectTaskData {
+	dec := gob.NewDecoder(bytes.NewReader(o.v.Bytes()))
+	if dec != nil {
+		ProjectTaskDataDec := ProjectTaskData{}
+		err := dec.Decode(&ProjectTaskDataDec)
+		if err == nil {
+			return ProjectTaskDataDec
+		}
 	}
-	return buffer.Bytes()
-}
-
-func (o Observation) GoEthereumValueBatchId() *big.Int {
-	data := o.v.Bytes()
-	var res = new(big.Int)
-	if len(data) > 33 {
-		res.SetBytes(data[1:33])
-		fmt.Printf("GoEthereumValueBatchId_res:%x, len:%d\n", res.Bytes(), len(res.Bytes()))
-	}
-	return res
+	return ProjectTaskData{}
 }
 
 func (o Observation) Deviates(old Observation, thresholdPPB uint64) bool {
