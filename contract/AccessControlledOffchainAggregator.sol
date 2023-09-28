@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
-
 import "./OffchainAggregator.sol";
 import "./SimpleReadAccessController.sol";
-
+import {LibOcrTypes} from "./libraries/ocr/LibOcrTypes.sol";
 /**
  * @notice Wrapper of OffchainAggregator which checks read access on Aggregator-interface methods
  */
@@ -24,7 +23,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     string memory description
   )
     OffchainAggregator(
-      InitOCR(
+    LibOcrTypes.InitOCR(
       _maximumGasPrice,
       _reasonableGasPrice,
       _microLinkPerEth,

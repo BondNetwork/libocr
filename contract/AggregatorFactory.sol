@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
 pragma abicoder v2;
+
+import {LibOcrFunctions} from  "./libraries/ocr/LibOcrFunctions.sol";
+import {LibOcrTypes} from  "./libraries/ocr/LibOcrTypes.sol";
+
 import "./AggregatorFactoryInterface.sol";
 import "./AccessControlledOffchainAggregator.sol";
 
