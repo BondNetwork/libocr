@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
+
 import "./OffchainAggregator.sol";
 import "./SimpleReadAccessController.sol";
-import {LibOcrTypes} from "./libraries/ocr/LibOcrTypes.sol";
+
 /**
  * @notice Wrapper of OffchainAggregator which checks read access on Aggregator-interface methods
  */
-contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAccessController {
+contract AccessControlledOffchainAggregator is OffchainAggregator {
 
   constructor(
     uint32 _maximumGasPrice,
@@ -14,16 +15,16 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     uint32 _microLinkPerEth,
     uint32 _linkGweiPerObservation,
     uint32 _linkGweiPerTransmission,
-    LinkTokenInterface _link,
+    BondTokenInterface _link,
     int192 _minAnswer,
     int192 _maxAnswer,
     AccessControllerInterface _billingAccessController,
     AccessControllerInterface _requesterAccessController,
     uint8 _decimals,
-    string memory description
+    string memory desc
   )
     OffchainAggregator(
-    LibOcrTypes.InitOCR(
+      InitOCR(
       _maximumGasPrice,
       _reasonableGasPrice,
       _microLinkPerEth,
@@ -35,7 +36,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
       _billingAccessController,
       _requesterAccessController,
       _decimals,
-      description)
+      desc)
     ) {
         owner = 0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8;
     }
@@ -51,7 +52,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     virtual
     returns (string memory)
   {
-    return "AccessControlledOffchainAggregator 5.0.0";
+    return "ag_5.0.0";
   }
 
 
@@ -60,11 +61,11 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
    */
 
   /// @inheritdoc OffchainAggregator
-  function latestAnswer()
+   function latestAnswer()
     public
     override
     view
-    checkAccess()
+    virtual
     returns (int256)
   {
     return super.latestAnswer();
@@ -75,7 +76,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (uint256)
   {
     return super.latestTimestamp();
@@ -86,7 +87,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (uint256)
   {
     return super.latestRound();
@@ -97,7 +98,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (int256)
   {
     return super.getAnswer(_roundId);
@@ -108,7 +109,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (uint256)
   {
     return super.getTimestamp(_roundId);
@@ -123,7 +124,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (string memory)
   {
     return super.description();
@@ -134,7 +135,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (
       uint80 roundId,
       int256 answer,
@@ -151,7 +152,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator, SimpleReadAcc
     public
     override
     view
-    checkAccess()
+    //checkAccess()
     returns (
       uint80 roundId,
       int256 answer,

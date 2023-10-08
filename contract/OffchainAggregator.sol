@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
 pragma abicoder v2;
-
-import {LibOcrFunctions} from  "./libraries/ocr/LibOcrFunctions.sol";
-import {LibOcrTypes} from  "./libraries/ocr/LibOcrTypes.sol";
 import "./AccessControllerInterface.sol";
 import "./AggregatorV2V3Interface.sol";
 import "./AggregatorValidatorInterface.sol";
-import "./LinkTokenInterface.sol";
+import "./BondTokenInterface.sol";
 import "./Owned.sol";
 import "./OffchainAggregatorBilling.sol";
 import "./TypeAndVersionInterface.sol";
+//import {Ocrlib} from "./libraries/Ocrlib.sol";
 
 /**
   * @notice Onchain verification of reports from the offchain reporting protocol
@@ -20,26 +18,49 @@ import "./TypeAndVersionInterface.sol";
 */
 
 contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3Interface, TypeAndVersionInterface {
-  
-  using LibOcrFunctions for LibOcrFunctions.SelfData;
 
-  /*struct SelfData{
-    mapping (address => LibOcrTypes.Oracle)  s_oracles;
-    uint16[maxNumOracles]  s_oracleObservationsCounts;
-    uint256[maxNumOracles]  s_gasReimbursementsLinkWei;
-    LibOcrTypes.HotVars  s_hotVars;
-    mapping (address => address )  s_payees;
-    LibOcrTypes.Billing  s_billing;
-    LinkTokenInterface  s_linkToken;
-    uint32  s_latestConfigBlockNumber;
-    uint32  s_configCount;
-    address[]  s_signers;
-    address[]  s_transmitters;
-  }*/
+  uint256 constant private maxUint32 = (1 << 32) - 1;
 
-  
-  LibOcrTypes.HotVars internal s_hotVars;
-  mapping(uint32 /* aggregator round ID */ => LibOcrTypes.Transmission) internal s_transmissions;
+  // Storing these fields used on the hot path in a HotVars variable reduces the
+  // retrieval of all of them to a single SLOAD. If any further fields are
+  // added, make sure that storage of the struct still takes at most 32 bytes.
+  struct HotVars {
+    // Provides 128 bits of security against 2nd pre-image attacks, but only
+    // 64 bits against collisions. This is acceptable, since a malicious owner has
+    // easier way of messing up the protocol than to find hash collisions.
+    bytes16 latestConfigDigest;
+    uint40 latestEpochAndRound; // 32 most sig bits for epoch, 8 least sig bits for round
+    // Current bound assumed on number of faulty/dishonest oracles participating
+    // in the protocol, this value is referred to as f in the design
+    uint8 threshold;
+    // Chainlink Aggregators expose a roundId to consumers. The offchain reporting
+    // protocol does not use this id anywhere. We increment it whenever a new
+    // transmission is made to provide callers with contiguous ids for successive
+    // reports.
+    uint32 latestAggregatorRoundId;
+  }
+  HotVars internal s_hotVars;
+
+  struct TaskItem {
+    string   tId;
+    bytes32  tMerkleRoot;
+  }
+
+  struct ProjectTaskData {
+    string  projectId;
+    uint64  batchId;
+    uint32  taskCount;
+    TaskItem []taskItems;
+  }
+
+  // Transmission records the median answer from the transmit transaction at
+  // time timestamp
+  struct Transmission {
+    ProjectTaskData merkleRoot;
+    uint64 timestamp;
+  }
+
+  mapping(uint32 /* aggregator round ID */ => Transmission) internal s_transmissions;
 
   // incremented each time a new config is posted. This count is incorporated
   // into the config digest, to prevent replay attacks.
@@ -54,11 +75,45 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
 
   bool internal s_lock;
 
+  /*
+   * @param _maximumGasPrice highest gas price for which transmitter will be compensated
+   * @param _reasonableGasPrice transmitter will receive reward for gas prices under this value
+   * @param _microLinkPerEth reimbursement per ETH of gas cost, in 1e-6LINK units
+   * @param _linkGweiPerObservation reward to oracle for contributing an observation to a successfully transmitted report, in 1e-9LINK units
+   * @param _linkGweiPerTransmission reward to transmitter of a successful report, in 1e-9LINK units
+   * @param _link address of the LINK contract
+   * @param _minAnswer lowest answer the median of a report is allowed to be
+   * @param _maxAnswer highest answer the median of a report is allowed to be
+   * @param _billingAccessController access controller for billing admin functions
+   * @param _requesterAccessController access controller for requesting new rounds
+   * @param _decimals answers are stored in fixed-point format, with this many digits of precision
+   * @param _description short human-readable description of observable this contract's answers pertain to
+   */
+  struct InitOCR{
+    uint32 _maximumGasPrice;
+    uint32 _reasonableGasPrice;
+    uint32 _microLinkPerEth;
+    uint32 _linkGweiPerObservation;
+    uint32 _linkGweiPerTransmission;
+    BondTokenInterface _link;
+    int192 _minAnswer;
+    int192 _maxAnswer;
+    AccessControllerInterface _billingAccessController;
+    AccessControllerInterface _requesterAccessController;
+    uint8 _decimals;
+    string _description;
+  }
+
   constructor(
-    LibOcrTypes.InitOCR memory data
+    InitOCR memory data
   )
-    OffchainAggregatorBilling(data._maximumGasPrice, data._reasonableGasPrice, data._microLinkPerEth,
-      data._linkGweiPerObservation, data._linkGweiPerTransmission,data._link,
+    OffchainAggregatorBilling(
+      data._maximumGasPrice,
+      data._reasonableGasPrice,
+      data._microLinkPerEth,
+      data._linkGweiPerObservation,
+      data._linkGweiPerTransmission,
+      data._link,
       data._billingAccessController
     )
   {
@@ -83,17 +138,41 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     return "OffchainAggregator 5.0.0";
   }
 
+  /*
+   * Config logic
+   */
+
+  /**
+   * @notice triggers a new run of the offchain reporting protocol
+   * @param previousConfigBlockNumber block in which the previous config was set, to simplify historic analysis
+   * @param configCount ordinal number of this config setting among all config settings over the life of this contract
+   * @param signers ith element is address ith oracle uses to sign a report
+   * @param transmitters ith element is address ith oracle uses to transmit a report via the transmit method
+   * @param threshold maximum number of faulty/dishonest oracles the protocol can tolerate while still working correctly
+   * @param encodedConfigVersion version of the serialization format used for "encoded" parameter
+   * @param encoded serialized data used by oracles to configure their offchain operation
+   */
+  event ConfigSet(
+    uint32 previousConfigBlockNumber,
+    uint64 configCount,
+    address[] signers,
+    address[] transmitters,
+    uint8 threshold,
+    uint64 encodedConfigVersion,
+    bytes encoded
+  );
+
   // Reverts transaction if config args are invalid
   modifier checkConfigValid (
     uint256 _numSigners, uint256 _numTransmitters, uint256 _threshold
   ) {
-    require(_numSigners <= maxNumOracles, "1");
-    require(_threshold > 0, "2");
+    require(_numSigners <= maxNumOracles, "01");
+    require(_threshold > 0, "02");
     require(
       _numSigners == _numTransmitters,
-      "3"
+      "03"
     );
-    require(_numSigners > 3*_threshold, "3");
+    require(_numSigners > 3*_threshold, "04");
     _;
   }
 
@@ -116,8 +195,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     checkConfigValid(_signers.length, _transmitters.length, _threshold)
     onlyOwner()
   {
-
-    /*while (s_signers.length != 0) { // remove any old signer/transmitter addresses
+    while (s_signers.length != 0) { // remove any old signer/transmitter addresses
       uint lastIdx = s_signers.length - 1;
       address signer = s_signers[lastIdx];
       address transmitter = s_transmitters[lastIdx];
@@ -131,13 +209,13 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     for (uint i = 0; i < _signers.length; i++) { // add new signer/transmitter addresses
       require(
         s_oracles[_signers[i]].role == Role.Unset,
-        "4"
+        "05"
       );
       s_oracles[_signers[i]] = Oracle(uint8(i), Role.Signer);
-      require(s_payees[_transmitters[i]] != address(0), "23");
+      require(s_payees[_transmitters[i]] != address(0), "06");
       require(
         s_oracles[_transmitters[i]].role == Role.Unset,
-        "5"
+        "07"
       );
       s_oracles[_transmitters[i]] = Oracle(uint8(i), Role.Transmitter);
       s_signers.push(_signers[i]);
@@ -160,7 +238,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       );
       s_hotVars.latestEpochAndRound = 0;
     }
-    emit LibOcrTypes.ConfigSet(
+    emit ConfigSet(
       previousConfigBlockNumber,
       configCount,
       _signers,
@@ -168,32 +246,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       _threshold,
       _encodedConfigVersion,
       _encoded
-    );*/
-    /*struct SelfData{
-    mapping (address => LibOcrTypes.Oracle)  s_oracles;
-    uint16[maxNumOracles]  s_oracleObservationsCounts;
-    uint256[maxNumOracles]  s_gasReimbursementsLinkWei;
-    LibOcrTypes.HotVars  s_hotVars;
-    mapping (address => address )  s_payees;
-    LibOcrTypes.Billing  s_billing;
-    LinkTokenInterface  s_linkToken;
-    uint32  s_latestConfigBlockNumber;
-    uint32  s_configCount;
-    address[]  s_signers;
-    address[]  s_transmitters;
-  }*/
-    LibOcrFunctions.SelfData storage data;
-    data.s_oracleObservationsCounts = s_oracleObservationsCounts;
-    data.s_gasReimbursementsLinkWei = s_gasReimbursementsLinkWei;
-    data.s_hotVars = s_hotVars;
-    data.s_billing = s_billing;
-    data.s_linkToken = s_linkToken;
-    data.s_latestConfigBlockNumber = s_latestConfigBlockNumber;
-    data.s_configCount = s_configCount;
-    data.s_signers = s_signers;
-    data.s_transmitters = s_transmitters;
-    LibOcrFunctions.ConfigData memory configData = LibOcrFunctions.ConfigData(_signers, _transmitters, _threshold, _encodedConfigVersion, _encoded);
-    data.setConfig(s_oracles, s_payees, configData);
+    );
   }
 
   function configDigestFromConfigData(
@@ -205,9 +258,11 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     uint64 _encodedConfigVersion,
     bytes calldata _encodedConfig
   ) internal pure returns (bytes16) {
-    return LibOcrFunctions.configDigestFromConfigData(_contractAddress, _configCount,
-     _signers, _transmitters, _threshold, _encodedConfigVersion, _encodedConfig);
+    return bytes16(keccak256(abi.encode(_contractAddress, _configCount,
+      _signers, _transmitters, _threshold, _encodedConfigVersion, _encodedConfig
+    )));
   }
+
   /**
    * @notice information about current offchain reporting protocol configuration
 
@@ -240,7 +295,30 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       return s_transmitters;
   }
 
-  LibOcrTypes.ValidatorConfig private s_validatorConfig;
+  /*
+   * On-chain validation logc
+   */
+
+  // Configuration for validator
+  struct ValidatorConfig {
+    AggregatorValidatorInterface validator;
+    uint32 gasLimit;
+  }
+  ValidatorConfig private s_validatorConfig;
+
+  /**
+   * @notice indicates that the validator configuration has been set
+   * @param previousValidator previous validator contract
+   * @param previousGasLimit previous gas limit for validate calls
+   * @param currentValidator current validator contract
+   * @param currentGasLimit current gas limit for validate calls
+   */
+  event ValidatorConfigSet(
+    AggregatorValidatorInterface indexed previousValidator,
+    uint32 previousGasLimit,
+    AggregatorValidatorInterface indexed currentValidator,
+    uint32 currentGasLimit
+  );
 
   /**
    * @notice validator configuration
@@ -252,7 +330,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     view
     returns (AggregatorValidatorInterface validator, uint32 gasLimit)
   {
-    LibOcrTypes.ValidatorConfig memory vc = s_validatorConfig;
+    ValidatorConfig memory vc = s_validatorConfig;
     return (vc.validator, vc.gasLimit);
   }
 
@@ -266,19 +344,52 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     public
     onlyOwner()
   {
-    LibOcrTypes.ValidatorConfig memory previous = s_validatorConfig;
+    ValidatorConfig memory previous = s_validatorConfig;
 
     if (previous.validator != _newValidator || previous.gasLimit != _newGasLimit) {
-      s_validatorConfig = LibOcrTypes.ValidatorConfig({
+      s_validatorConfig = ValidatorConfig({
         validator: _newValidator,
         gasLimit: _newGasLimit
       });
 
-      emit LibOcrTypes.ValidatorConfigSet(previous.validator, previous.gasLimit, _newValidator, _newGasLimit);
+      emit ValidatorConfigSet(previous.validator, previous.gasLimit, _newValidator, _newGasLimit);
     }
   }
 
   uint256 private constant CALL_WITH_EXACT_GAS_CUSHION = 5_000;
+
+  /**
+   * @dev calls target address with exactly gasAmount gas and data as calldata
+   * or reverts if at least gasAmount gas is not available.
+   */
+  function callWithExactGasEvenIfTargetIsNoContract(
+    uint256 _gasAmount,
+    address _target,
+    bytes memory _data
+  )
+    private
+    returns (bool sufficientGas)
+  {
+    // solhint-disable-next-line no-inline-assembly
+    assembly {
+      let g := gas()
+      // Compute g -= CALL_WITH_EXACT_GAS_CUSHION and check for underflow. We
+      // need the cushion since the logic following the above call to gas also
+      // costs gas which we cannot account for exactly. So cushion is a
+      // conservative upper bound for the cost of this logic.
+      if iszero(lt(g, CALL_WITH_EXACT_GAS_CUSHION)) {
+        g := sub(g, CALL_WITH_EXACT_GAS_CUSHION)
+        // If g - g//64 <= _gasAmount, we don't have enough gas. (We subtract g//64
+        // because of EIP-150.)
+        if gt(sub(g, div(g, 64)), _gasAmount) {
+          // Call and ignore success/return data. Note that we did not check
+          // whether a contract actually exists at the _target address.
+          pop(call(_gasAmount, _target, 0, add(_data, 0x20), mload(_data), 0, 0))
+          sufficientGas := true
+        }
+      }
+    }
+  }
 
   /*
    * requestNewRound logic
@@ -286,6 +397,21 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
 
   AccessControllerInterface internal s_requesterAccessController;
 
+  /**
+   * @notice emitted when a new requester access controller contract is set
+   * @param old the address prior to the current setting
+   * @param current the address of the new access controller contract
+   */
+  event RequesterAccessControllerSet(AccessControllerInterface old, AccessControllerInterface current);
+
+  /**
+   * @notice emitted to immediately request a new round
+   * @param requester the address of the requester
+   * @param configDigest the latest transmission's configDigest
+   * @param epoch the latest transmission's epoch
+   * @param round the latest transmission's round
+   */
+  event RoundRequested(address indexed requester, bytes16 configDigest, uint32 epoch, uint8 round);
 
   /**
    * @notice address of the requester access controller contract
@@ -310,7 +436,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     AccessControllerInterface oldController = s_requesterAccessController;
     if (_requesterAccessController != oldController) {
       s_requesterAccessController = AccessControllerInterface(_requesterAccessController);
-      emit LibOcrTypes.RequesterAccessControllerSet(oldController, _requesterAccessController);
+      emit RequesterAccessControllerSet(oldController, _requesterAccessController);
     }
   }
 
@@ -322,17 +448,102 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
    */
   function requestNewRound() external returns (uint80) {
     require(msg.sender == owner || s_requesterAccessController.hasAccess(msg.sender, msg.data),
-      "6");
+      "08");
 
-    LibOcrTypes.HotVars memory hotVars = s_hotVars;
+    HotVars memory hotVars = s_hotVars;
 
-    emit LibOcrTypes.RoundRequested(
+    emit RoundRequested(
       msg.sender,
       hotVars.latestConfigDigest,
       uint32(s_hotVars.latestEpochAndRound >> 8),
       uint8(s_hotVars.latestEpochAndRound)
     );
     return hotVars.latestAggregatorRoundId + 1;
+  }
+
+  /*
+   * Transmission logic
+   */
+
+  /**
+   * @notice indicates that a new report was transmitted
+   * @param aggregatorRoundId the round to which this report was assigned
+   * @param projectId projectId of the observations attached this report
+   * @param transmitter address from which the report was transmitted
+   * @param observers observers transmitted with this report
+   * @param rawReportContext signature-replay-prevention domain-separation tag
+   */
+  event NewTransmission(
+    uint32 indexed aggregatorRoundId,
+    string  projectId,
+    address transmitter,
+    bytes observers,
+    bytes32 rawReportContext
+  );
+
+  // Used to relieve stack pressure in transmit
+  struct ReportData {
+    HotVars hotVars; // Only read from storage once
+    bytes observers; // ith element is the index of the ith observer
+    ProjectTaskData[] observationsRoot; // ith element is the ith observation
+    bytes vs; // jth element is the v component of the jth signature
+    bytes32 rawReportContext;
+  }
+
+  /*
+   * @notice details about the most recent report
+
+   * @return configDigest domain separation tag for the latest report
+   * @return epoch epoch in which the latest report was generated
+   * @return round OCR round in which the latest report was generated
+   * @return latestAnswer median value from latest report
+   * @return latestTimestamp when the latest report was transmitted
+   */
+  function latestTransmissionDetails()
+    external
+    view
+    returns (
+      bytes16 configDigest,
+      uint32 epoch,
+      uint8 round,
+      int192 latestAnswer,
+      uint64 latestTimestamp
+    )
+  {
+    require(msg.sender == tx.origin, "09");
+    return (
+      s_hotVars.latestConfigDigest,
+      uint32(s_hotVars.latestEpochAndRound >> 8),
+      uint8(s_hotVars.latestEpochAndRound),
+      1,
+      s_transmissions[s_hotVars.latestAggregatorRoundId].timestamp
+    );
+  }
+
+  // The constant-length components of the msg.data sent to transmit.
+  // See the "If we wanted to call sam" example on for example reasoning
+  // https://solidity.readthedocs.io/en/v0.7.2/abi-spec.html
+  uint16 private constant TRANSMIT_MSGDATA_CONSTANT_LENGTH_COMPONENT =
+    4 + // function selector
+    32 + // word containing start location of abiencoded _report value
+    32 + // word containing location start of abiencoded  _rs value
+    32 + // word containing start location of abiencoded _ss value
+    32 + // _rawVs value
+    32 + // word containing length of _report
+    32 + // word containing length _rs
+    32 + // word containing length of _ss
+    0; // placeholder
+
+  function expectedMsgDataLength(
+    bytes calldata _report, bytes32[] calldata _rs, bytes32[] calldata _ss
+  ) private pure returns (uint256 length)
+  {
+    // calldata will never be big enough to make this overflow
+    return uint256(TRANSMIT_MSGDATA_CONSTANT_LENGTH_COMPONENT) +
+      _report.length + // one byte pure entry in _report
+      _rs.length * 32 + // 32 bytes per entry in _rs
+      _ss.length * 32 + // 32 bytes per entry in _ss
+      0; // placeholder
   }
 
   /**
@@ -358,15 +569,15 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     // yellow paper, p. 25, for G_txdatazero and EIP 2028 for G_txdatanonzero.)
     // This could amount to reimbursement profit of 36 million gas, given a 3MB
     // zero tail.
-    require(msg.data.length == LibOcrFunctions.expectedMsgDataLength(_report, _rs, _ss),
-      "9");
-    LibOcrTypes.ReportData memory r; // Relieves stack pressure
+    require(msg.data.length == expectedMsgDataLength(_report, _rs, _ss),
+      "10");
+    ReportData memory r; // Relieves stack pressure
     {
       r.hotVars = s_hotVars; // cache read from storage
 
       bytes32 rawObservers;
       (r.rawReportContext, rawObservers, r.observationsRoot) = abi.decode(
-        _report, (bytes32, bytes32, LibOcrTypes.ProjectTaskData[])
+        _report, (bytes32, bytes32, ProjectTaskData[])
       );
 
       // rawReportContext consists of:
@@ -378,7 +589,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       bytes16 configDigest = bytes16(r.rawReportContext << 88);
       require(
         r.hotVars.latestConfigDigest == configDigest,
-        "10"
+        "11"
       );
 
       uint40 epochAndRound = uint40(uint256(r.rawReportContext));
@@ -389,15 +600,15 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       //
       // because alphabetic ordering implies e <= e', and if e = e', then r<=r',
       // so e*256+r <= e'*256+r', because r, r' < 256
-      require(r.hotVars.latestEpochAndRound < epochAndRound, "11");
+      require(r.hotVars.latestEpochAndRound < epochAndRound, "12");
 
-      require(_rs.length > r.hotVars.threshold, "12");
-      require(_rs.length <= maxNumOracles, "13");
-      require(_ss.length == _rs.length, "14");
+      require(_rs.length > r.hotVars.threshold, "13");
+      require(_rs.length <= maxNumOracles, "14");
+      require(_ss.length == _rs.length, "15");
       require(r.observationsRoot.length <= maxNumOracles,
-              "15");
-      require(r.observationsRoot.length > 2 * r.hotVars.threshold,
               "16");
+      require(r.observationsRoot.length > 2 * r.hotVars.threshold,
+              "17");
 
       // Copy signature parities in bytes32 _rawVs to bytes r.v
       r.vs = new bytes(_rs.length);
@@ -410,16 +621,16 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       bool[maxNumOracles] memory seen;
       for (uint8 i = 0; i < r.observationsRoot.length; i++) {
         uint8 observerIdx = uint8(rawObservers[i]);
-        require(!seen[observerIdx], "17");
+        require(!seen[observerIdx], "18");
         seen[observerIdx] = true;
         r.observers[i] = rawObservers[i];
       }
 
-      LibOcrTypes.Oracle memory transmitter = s_oracles[msg.sender];
+      Oracle memory transmitter = s_oracles[msg.sender];
       require( // Check that sender is authorized to report
-        transmitter.role == LibOcrTypes.Role.Transmitter &&
+        transmitter.role == Role.Transmitter &&
         msg.sender == s_transmitters[transmitter.index],
-        "18"
+        "19"
       );
       // record epochAndRound here, so that we don't have to carry the local
       // variable in transmit. The change is reverted if something fails later.
@@ -430,32 +641,34 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       bytes32 h = keccak256(_report);
       bool[maxNumOracles] memory signed;
 
-      LibOcrTypes.Oracle memory o;
+      Oracle memory o;
       for (uint i = 0; i < _rs.length; i++) {
         address signer = ecrecover(h, uint8(r.vs[i])+27, _rs[i], _ss[i]);
         o = s_oracles[signer];
-        require(o.role == LibOcrTypes.Role.Signer, "19");
-        require(!signed[o.index], "20");
+        require(o.role == Role.Signer, "21");
+        require(!signed[o.index], "22");
         signed[o.index] = true;
       }
     }
 
     { 
-      LibOcrTypes.ProjectTaskData  memory  root = r.observationsRoot[r.observationsRoot.length/2];
-      //require(minAnswer <= median && median <= maxAnswer, "median is out of min-max range");
-      r.hotVars.latestAggregatorRoundId++;
-      LibOcrTypes.Transmission storage item = s_transmissions[r.hotVars.latestAggregatorRoundId];
-      for (uint32 i = 0; i < uint32(root.taskItems.length); i++) {
-        item.merkleRoot.taskItems.push(root.taskItems[i]);
+      Transmission storage item = s_transmissions[r.hotVars.latestAggregatorRoundId];
+      {
+        ProjectTaskData  memory  root = r.observationsRoot[r.observationsRoot.length/2];
+        r.hotVars.latestAggregatorRoundId++;
+        for (uint32 i = 0; i < uint32(root.taskItems.length); i++) {
+          item.merkleRoot.taskItems.push(root.taskItems[i]);
+        }
+        item.merkleRoot.batchId = root.batchId;
+        item.merkleRoot.projectId = root.projectId;
+        item.merkleRoot.taskCount = root.taskCount;      
+        item.timestamp = uint64(block.timestamp);
       }
-      item.merkleRoot.batchId = root.batchId;
-      item.merkleRoot.projectId = root.projectId;
-      item.merkleRoot.taskCount = root.taskCount;      
-      item.timestamp = uint64(block.timestamp);
 
       //s_transmissions[r.hotVars.latestAggregatorRoundId] =
       //  Transmission(root, uint64(block.timestamp));  
-      emit LibOcrTypes.NewTransmission(
+
+      emit NewTransmission(
         r.hotVars.latestAggregatorRoundId,
         item.merkleRoot.projectId,
         msg.sender,
@@ -470,14 +683,14 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
         block.timestamp
       );
       emit AnswerUpdated(
-        root.batchId,
+        item.merkleRoot.batchId,
         r.hotVars.latestAggregatorRoundId,
         block.timestamp
       );
       //validateAnswer(r.hotVars.latestAggregatorRoundId, root);
     }
     s_hotVars = r.hotVars;
-    assert(initialGas < LibOcrTypes.maxUint32);
+    assert(initialGas < maxUint32);
     reimburseAndRewardOracles(uint32(initialGas), r.observers);
   }
 
@@ -607,8 +820,8 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       uint80 answeredInRound
     )
   {
-    require(_roundId <= 0xFFFFFFFF, LibOcrTypes.V3_NO_DATA_ERROR);
-    LibOcrTypes.Transmission memory transmission = s_transmissions[uint32(_roundId)];
+    require(_roundId <= 0xFFFFFFFF, V3_NO_DATA_ERROR);
+    Transmission memory transmission = s_transmissions[uint32(_roundId)];
     return (
       _roundId,
       1,
@@ -644,7 +857,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     // Skipped for compatability with existing FluxAggregator in which latestRoundData never reverts.
     // require(roundId != 0, V3_NO_DATA_ERROR);
 
-    LibOcrTypes.Transmission memory transmission = s_transmissions[uint32(roundId)];
+    Transmission memory transmission = s_transmissions[uint32(roundId)];
     return (
       roundId,
       1,
@@ -669,6 +882,17 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     s_lock = isLock;
   }
 
+
+  function isEqual(string memory a, string memory b) internal pure returns (bool) {
+          bytes memory aa = bytes(a);
+          bytes memory bb = bytes(b);
+          if (aa.length != bb.length) return false;
+          for(uint i = 0; i < aa.length; i ++) {
+              if(aa[i] != bb[i]) return false;
+          }
+          return true;
+  }
+
   function latestMerkleRoundData(string calldata taskId)
   external
   override
@@ -682,16 +906,14 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     uint256 updatedAt
   )
   {
-    roundId = s_hotVars.latestAggregatorRoundId;
-    LibOcrTypes.Transmission memory transmission = s_transmissions[uint32(roundId)];
-    for(uint32 nIndex = 0; nIndex < uint32(transmission.merkleRoot.taskItems.length); nIndex++){
-      if(LibOcrFunctions.isEqual(transmission.merkleRoot.taskItems[nIndex].tId, taskId)){
+    for(uint32 nIndex = 0; nIndex < uint32(s_transmissions[uint32(s_hotVars.latestAggregatorRoundId)].merkleRoot.taskItems.length); nIndex++){
+      if(isEqual(s_transmissions[uint32(s_hotVars.latestAggregatorRoundId)].merkleRoot.taskItems[nIndex].tId, taskId)){
         return (
-            roundId,
-            transmission.merkleRoot.batchId,
-            transmission.merkleRoot.taskItems[nIndex].tMerkleRoot,
-            transmission.timestamp,
-            transmission.timestamp
+            s_hotVars.latestAggregatorRoundId,
+            s_transmissions[uint32(s_hotVars.latestAggregatorRoundId)].merkleRoot.batchId,
+            s_transmissions[uint32(s_hotVars.latestAggregatorRoundId)].merkleRoot.taskItems[nIndex].tMerkleRoot,
+            s_transmissions[uint32(s_hotVars.latestAggregatorRoundId)].timestamp,
+            s_transmissions[uint32(s_hotVars.latestAggregatorRoundId)].timestamp
           );
       }
     }

@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.7.6;
 
-import {LibOcrTypes} from  "./libraries/ocr/LibOcrTypes.sol";
-import {LibOcrFunctions} from  "./libraries/ocr/LibOcrFunctions.sol";
-
 import "./AccessControllerInterface.sol";
-import "./LinkTokenInterface.sol";
+import "./BondTokenInterface.sol";
 import "./Owned.sol";
+//import {Ocrlib} from "./libraries/Ocrlib.sol";
 
 /**
  * @notice tracks administration of oracle-reward and gas-reimbursement parameters.
@@ -47,11 +45,30 @@ contract OffchainAggregatorBilling is Owned {
   // Maximum number of oracles the offchain reporting protocol is designed for
   uint256 constant internal maxNumOracles = 31;
 
-  LibOcrTypes.Billing internal s_billing;
+  // Parameters for oracle payments
+  struct Billing {
+
+    // Highest compensated gas price, in ETH-gwei uints
+    uint32 maximumGasPrice;
+
+    // If gas price is less (in ETH-gwei units), transmitter gets half the savings
+    uint32 reasonableGasPrice;
+
+    // Pay transmitter back this much LINK per unit eth spent on gas
+    // (1e-6LINK/ETH units)
+    uint32 microLinkPerEth;
+
+    // Fixed LINK reward for each observer, in LINK-gwei units
+    uint32 linkGweiPerObservation;
+
+    // Fixed reward for transmitter, in linkGweiPerObservation units
+    uint32 linkGweiPerTransmission;
+  }
+  Billing internal s_billing;
 
   // We assume that the token contract is correct. This contract is not written
   // to handle misbehaving ERC20 tokens!
-  LinkTokenInterface internal s_linkToken;
+  BondTokenInterface internal s_linkToken;
 
   AccessControllerInterface internal s_billingAccessController;
 
@@ -96,7 +113,26 @@ contract OffchainAggregatorBilling is Owned {
   // updating this variable.
   uint256[maxNumOracles] internal s_gasReimbursementsLinkWei;
 
-  mapping (address /* signer OR transmitter address */ => LibOcrTypes.Oracle)
+  // Used for s_oracles[a].role, where a is an address, to track the purpose
+  // of the address, or to indicate that the address is unset.
+  enum Role {
+    // No oracle role has been set for address a
+    Unset,
+    // Signing address for the s_oracles[a].index'th oracle. I.e., report
+    // signatures from this oracle should ecrecover back to address a.
+    Signer,
+    // Transmission address for the s_oracles[a].index'th oracle. I.e., if a
+    // report is received by OffchainAggregator.transmit in which msg.sender is
+    // a, it is attributed to the s_oracles[a].index'th oracle.
+    Transmitter
+  }
+
+  struct Oracle {
+    uint8 index; // Index of oracle in s_signers/s_transmitters
+    Role role;   // Role of the address which mapped to this struct
+  }
+
+  mapping (address /* signer OR transmitter address */ => Oracle)
     internal s_oracles;
 
   // s_signers contains the signing address of each oracle
@@ -115,14 +151,14 @@ contract OffchainAggregatorBilling is Owned {
     uint32 _microLinkPerEth,
     uint32 _linkGweiPerObservation,
     uint32 _linkGweiPerTransmission,
-    LinkTokenInterface _link,
+    BondTokenInterface _link,
     AccessControllerInterface _billingAccessController
   )
   {
     setBillingInternal(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
       _linkGweiPerObservation, _linkGweiPerTransmission);
     s_linkToken = _link;
-    emit LinkTokenSet(LinkTokenInterface(address(0)), _link);
+    emit LinkTokenSet(BondTokenInterface(address(0)), _link);
     setBillingAccessControllerInternal(_billingAccessController);
     uint16[maxNumOracles] memory counts; // See s_oracleObservationsCounts docstring
     uint256[maxNumOracles] memory gas; // see s_gasReimbursementsLinkWei docstring
@@ -140,8 +176,8 @@ contract OffchainAggregatorBilling is Owned {
    * @param _newLinkToken the address of the new LINK token contract
    */
   event LinkTokenSet(
-    LinkTokenInterface indexed _oldLinkToken,
-    LinkTokenInterface indexed _newLinkToken
+    BondTokenInterface indexed _oldLinkToken,
+    BondTokenInterface indexed _newLinkToken
   );
 
   /*
@@ -157,12 +193,12 @@ contract OffchainAggregatorBilling is Owned {
    * to handle misbehaving ERC20 tokens!
    */
   function setLinkToken(
-    LinkTokenInterface _linkToken,
+    BondTokenInterface _linkToken,
     address _recipient
   ) external
     onlyOwner()
   {
-    LinkTokenInterface oldLinkToken = s_linkToken;
+    BondTokenInterface oldLinkToken = s_linkToken;
     if (_linkToken == oldLinkToken) {
       // No change, nothing to be done
       return;
@@ -186,7 +222,7 @@ contract OffchainAggregatorBilling is Owned {
   function getLinkToken()
     external
     view
-    returns(LinkTokenInterface linkToken)
+    returns(BondTokenInterface linkToken)
   {
     return s_linkToken;
   }
@@ -216,7 +252,7 @@ contract OffchainAggregatorBilling is Owned {
   )
     internal
   {
-    s_billing = LibOcrTypes.Billing(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
+    s_billing = Billing(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
       _linkGweiPerObservation, _linkGweiPerTransmission);
     emit BillingSet(_maximumGasPrice, _reasonableGasPrice, _microLinkPerEth,
       _linkGweiPerObservation, _linkGweiPerTransmission);
@@ -267,7 +303,7 @@ contract OffchainAggregatorBilling is Owned {
       uint32 linkGweiPerTransmission
     )
   {
-    LibOcrTypes.Billing memory billing = s_billing;
+    Billing memory billing = s_billing;
     return (
       billing.maximumGasPrice,
       billing.reasonableGasPrice,
@@ -330,7 +366,27 @@ contract OffchainAggregatorBilling is Owned {
     external
   {
     require(msg.sender == s_payees[_transmitter], "43");
-    LibOcrFunctions.payOracle(s_oracles, s_payees, s_linkToken, s_oracleObservationsCounts,s_gasReimbursementsLinkWei, s_billing, _transmitter);
+    payOracle(_transmitter);
+  }
+
+  /**
+   * @notice query an oracle's payment amount
+   * @param _transmitter the transmitter address of the oracle
+   */
+  function owedPayment(address _transmitter)
+    public
+    view
+    returns (uint256)
+  {
+    Oracle memory oracle = s_oracles[_transmitter];
+    if (oracle.role == Role.Unset) { return 0; }
+    Billing memory billing = s_billing;
+    uint256 linkWeiAmount =
+      uint256(s_oracleObservationsCounts[oracle.index] - 1) *
+      uint256(billing.linkGweiPerObservation) *
+      (1 gwei);
+    linkWeiAmount += s_gasReimbursementsLinkWei[oracle.index] - 1;
+    return linkWeiAmount;
   }
 
   /**
@@ -344,10 +400,25 @@ contract OffchainAggregatorBilling is Owned {
     address indexed transmitter,
     address indexed payee,
     uint256 amount,
-    LinkTokenInterface indexed linkToken
+    BondTokenInterface indexed linkToken
   );
 
-  
+  // payOracle pays out _transmitter's balance to the corresponding payee, and zeros it out
+  function payOracle(address _transmitter)
+    internal
+  {
+    Oracle memory oracle = s_oracles[_transmitter];
+    uint256 linkWeiAmount = owedPayment(_transmitter);
+    if (linkWeiAmount > 0) {
+      address payee = s_payees[_transmitter];
+      // Poses no re-entrancy issues, because LINK.transfer does not yield
+      // control flow.
+      require(s_linkToken.transfer(payee, linkWeiAmount), "44");
+      s_oracleObservationsCounts[oracle.index] = 1; // "zero" the counts. see var's docstring
+      s_gasReimbursementsLinkWei[oracle.index] = 1; // "zero" the counts. see var's docstring
+      emit OraclePaid(_transmitter, payee, linkWeiAmount, s_linkToken);
+    }
+  }
 
   // payOracles pays out all transmitters, and zeros out their balances.
   //
@@ -356,7 +427,46 @@ contract OffchainAggregatorBilling is Owned {
   function payOracles()
     internal
   {
-    LibOcrFunctions.payOracles(s_payees, s_linkToken, s_oracleObservationsCounts, s_gasReimbursementsLinkWei, s_transmitters, s_billing);
+    Billing memory billing = s_billing;
+    BondTokenInterface linkToken = s_linkToken;
+    uint16[maxNumOracles] memory observationsCounts = s_oracleObservationsCounts;
+    uint256[maxNumOracles] memory gasReimbursementsLinkWei =
+      s_gasReimbursementsLinkWei;
+    address[] memory transmitters = s_transmitters;
+    for (uint transmitteridx = 0; transmitteridx < transmitters.length; transmitteridx++) {
+      uint256 reimbursementAmountLinkWei = gasReimbursementsLinkWei[transmitteridx] - 1;
+      uint256 obsCount = observationsCounts[transmitteridx] - 1;
+      uint256 linkWeiAmount =
+        obsCount * uint256(billing.linkGweiPerObservation) * (1 gwei) + reimbursementAmountLinkWei;
+      if (linkWeiAmount > 0) {
+          address payee = s_payees[transmitters[transmitteridx]];
+          // Poses no re-entrancy issues, because LINK.transfer does not yield
+          // control flow.
+          require(linkToken.transfer(payee, linkWeiAmount), "45");
+          observationsCounts[transmitteridx] = 1;       // "zero" the counts.
+          gasReimbursementsLinkWei[transmitteridx] = 1; // "zero" the counts.
+          emit OraclePaid(transmitters[transmitteridx], payee, linkWeiAmount, linkToken);
+        }
+    }
+    // "Zero" the accounting storage variables
+    s_oracleObservationsCounts = observationsCounts;
+    s_gasReimbursementsLinkWei = gasReimbursementsLinkWei;
+  }
+
+  function oracleRewards(
+    bytes memory observers,
+    uint16[maxNumOracles] memory observations
+  )
+    internal
+    pure
+    returns (uint16[maxNumOracles] memory)
+  {
+    // reward each observer-participant with the observer reward
+    for (uint obsIdx = 0; obsIdx < observers.length; obsIdx++) {
+      uint8 observer = uint8(observers[obsIdx]);
+      observations[observer] = saturatingAddUint16(observations[observer], 1);
+    }
+    return observations;
   }
 
   // This value needs to change if maxNumOracles is increased, or the accounting
@@ -431,7 +541,7 @@ contract OffchainAggregatorBilling is Owned {
     pure
     returns (uint128 gasCostEthWei)
   {
-    require(initialGas >= gasLeft, "45");
+    require(initialGas >= gasLeft, "46");
     uint256 gasUsed = // gas units
       initialGas - gasLeft + // observed gas usage
       callDataCost + accountingGasCost; // estimated gas usage
@@ -451,11 +561,11 @@ contract OffchainAggregatorBilling is Owned {
     external
   {
     require(msg.sender == owner || s_billingAccessController.hasAccess(msg.sender, msg.data),
-      "46");
+      "47");
     uint256 linkDue = totalLINKDue();
     uint256 linkBalance = s_linkToken.balanceOf(address(this));
-    require(linkBalance >= linkDue, "47");
-    require(s_linkToken.transfer(_recipient, min(linkBalance - linkDue, _amount)), "48");
+    require(linkBalance >= linkDue, "48");
+    require(s_linkToken.transfer(_recipient, min(linkBalance - linkDue, _amount)), "49");
   }
 
   // Total LINK due to participants in past reports.
@@ -477,7 +587,7 @@ contract OffchainAggregatorBilling is Owned {
     for (uint i = 0; i < maxNumOracles; i++) {
       linkDue += observationCounts[i] - 1; // Stored value is one greater than actual value
     }
-    LibOcrTypes.Billing memory billing = s_billing;
+    Billing memory billing = s_billing;
     // Convert linkGweiPerObservation to uint256, or this overflows!
     linkDue *= uint256(billing.linkGweiPerObservation) * (1 gwei);
     address[] memory transmitters = s_transmitters;
@@ -515,8 +625,8 @@ contract OffchainAggregatorBilling is Owned {
     view
     returns (uint16)
   {
-    LibOcrTypes.Oracle memory oracle = s_oracles[_signerOrTransmitter];
-    if (oracle.role == LibOcrTypes.Role.Unset) { return 0; }
+    Oracle memory oracle = s_oracles[_signerOrTransmitter];
+    if (oracle.role == Role.Unset) { return 0; }
     return s_oracleObservationsCounts[oracle.index] - 1;
   }
 
@@ -527,15 +637,15 @@ contract OffchainAggregatorBilling is Owned {
   )
     internal
   {
-    LibOcrTypes.Oracle memory txOracle = s_oracles[msg.sender];
-    LibOcrTypes.Billing memory billing = s_billing;
+    Oracle memory txOracle = s_oracles[msg.sender];
+    Billing memory billing = s_billing;
     // Reward oracles for providing observations. Oracles are not rewarded
     // for providing signatures, because signing is essentially free.
     s_oracleObservationsCounts =
-      LibOcrFunctions.oracleRewards(observers, s_oracleObservationsCounts);
+      oracleRewards(observers, s_oracleObservationsCounts);
     // Reimburse transmitter of the report for gas usage
-    require(txOracle.role == LibOcrTypes.Role.Transmitter,
-      "49"
+    require(txOracle.role == Role.Transmitter,
+      "50"
     );
     uint256 gasPrice = impliedGasPrice(
       tx.gasprice / (1 gwei), // convert to ETH-gwei units
@@ -591,6 +701,18 @@ contract OffchainAggregatorBilling is Owned {
     address indexed current,
     address indexed proposed
   );
+
+  /**
+   * @notice emitted when a transfer of an oracle's payee address has been completed
+   * @param transmitter address from which the oracle sends reports to the transmit method
+   * @param current the payeee address for the oracle, prior to this setting
+   */
+  event PayeeshipTransferred(
+    address indexed transmitter,
+    address indexed previous,
+    address indexed current
+  );
+
   /**
    * @notice sets the payees for transmitting addresses
    * @param _transmitters addresses oracles use to transmit the reports
@@ -605,7 +727,19 @@ contract OffchainAggregatorBilling is Owned {
     external
     onlyOwner()
   {
-    LibOcrFunctions.setPayees(s_payees, _transmitters, _payees);
+    require(_transmitters.length == _payees.length, "51");
+    for (uint i = 0; i < _transmitters.length; i++) {
+      address transmitter = _transmitters[i];
+      address payee = _payees[i];
+      address currentPayee = s_payees[transmitter];
+      bool zeroedOut = currentPayee == address(0);
+      require(zeroedOut || currentPayee == payee, "52");
+      s_payees[transmitter] = payee;
+
+      if (currentPayee != payee) {
+        emit PayeeshipTransferred(transmitter, currentPayee, payee);
+      }
+    }
   }
 
   /**
@@ -620,8 +754,8 @@ contract OffchainAggregatorBilling is Owned {
   )
     external
   {
-      require(msg.sender == s_payees[_transmitter], "50");
-      require(msg.sender != _proposed, "51");
+      require(msg.sender == s_payees[_transmitter], "53");
+      require(msg.sender != _proposed, "54");
 
       address previousProposed = s_proposedPayees[_transmitter];
       s_proposedPayees[_transmitter] = _proposed;
@@ -641,17 +775,17 @@ contract OffchainAggregatorBilling is Owned {
   )
     external
   {
-    require(msg.sender == s_proposedPayees[_transmitter], "53");
+    require(msg.sender == s_proposedPayees[_transmitter], "55");
 
     address currentPayee = s_payees[_transmitter];
     s_payees[_transmitter] = msg.sender;
     s_proposedPayees[_transmitter] = address(0);
 
-    emit LibOcrTypes.PayeeshipTransferred(_transmitter, currentPayee, msg.sender);
+    emit PayeeshipTransferred(_transmitter, currentPayee, msg.sender);
   }
 
   /*
-   * Helper functionsLi
+   * Helper functions
    */
 
   function saturatingAddUint16(uint16 _x, uint16 _y)
