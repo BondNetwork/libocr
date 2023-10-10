@@ -14,7 +14,7 @@ abstract contract BondUpgradeable is Initializable, OwnableUpgradeable, UUPSUpgr
     }
     function __BondUpgradeable_init() internal onlyInitializing {
         __Ownable_init();
-        //__UUPSUpgradeable_init();
+        __UUPSUpgradeable_init();
     }
 
     function _authorizeUpgrade(

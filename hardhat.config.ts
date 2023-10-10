@@ -10,7 +10,7 @@ import 'solidity-coverage'
 const COMPILER_SETTINGS = {
   optimizer: {
     enabled: true,
-    runs: 5,
+    runs: 500,
     },
   metadata: {
     bytecodeHash: 'none',
