@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
+pragma solidity ^0.8.0;
 pragma abicoder v2;
 import "./AccessControllerInterface.sol";
 import "./AggregatorV2V3Interface.sol";
@@ -120,7 +120,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     decimals = data._decimals;
     s_description = data._description;
     setRequesterAccessController(data._requesterAccessController);
-    setValidatorConfig(AggregatorValidatorInterface(0x0), 0);
+    setValidatorConfig(AggregatorValidatorInterface(address(0x0)), 0);
     minAnswer = data._minAnswer;
     maxAnswer = data._maxAnswer;
   }

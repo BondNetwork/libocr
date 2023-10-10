@@ -13,7 +13,7 @@ async function main() {
     const merkleDistributorFProxyC = await transparentUpgradeableProxy.deploy(
         aggregatorFactoryC.address,
         "0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8",
-        []
+        [],
     );
     console.log('merkleDistributorFProxyC address', merkleDistributorFProxyC.address);*/
     const aggregatorFactoryObj = await ethers.getContractAt('AggregatorFactory', "0xc0bC14B4463e552E9384C1458B6CC35E3AECC3ee", ownerSigner);

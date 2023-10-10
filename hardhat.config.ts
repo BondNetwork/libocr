@@ -10,11 +10,12 @@ import 'solidity-coverage'
 const COMPILER_SETTINGS = {
   optimizer: {
     enabled: true,
-    runs: 200,
+    runs: 5,
     },
   metadata: {
     bytecodeHash: 'none',
   },
+  viaIR: true,
 }
 
 const ACCOUNT_PRIVATE_KEY = "b588f6bf79507310840ba922e1a28c8cd16a5db34ac8161a8c5932692d0addfc";
@@ -75,6 +76,10 @@ export default {
         version: '0.8.15',
         settings: COMPILER_SETTINGS,
       },
+      {
+        version: '0.8.20',
+        settings: COMPILER_SETTINGS,
+      },
     ],
   },
   contractSizer: {
@@ -86,9 +91,24 @@ export default {
     timeout: 100000,
     forbidOnly: Boolean(process.env.CI),
   },
-  etherscan: {
+  /*etherscan: {
     // Your API key for Etherscan
     // Obtain one at https://etherscan.io/
     apiKey: "BZPRYWQJZYBIN5YR459V1NBG8A14KPWRQ9"
-  },
+  },*/
+  etherscan: {
+    apiKey: {
+      sepolia: "BZPRYWQJZYBIN5YR459V1NBG8A14KPWRQ9"
+    },
+    customChains: [
+      {
+        network: "sepolia",
+        chainId: 11155111,
+        urls: {
+          apiURL: "http://api-sepolia.etherscan.io/api",  // https => http
+          browserURL: "https://sepolia.etherscan.io"
+        }
+      }
+    ]
+  }
 }

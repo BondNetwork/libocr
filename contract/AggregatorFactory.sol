@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-pragma abicoder v2;
+pragma solidity  ^0.8.0;
+//pragma abicoder v2;
 import "./AccessControlledOffchainAggregator.sol";
-import "hardhat/console.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
-contract AggregatorFactory is Owned {
+contract AggregatorFactory is Initializable{
     event AggregatorCreated(string  pId, address aggregator, uint256 timestamp);
     event AggregatorUpdate(string  pId, address aggregator, uint256 timestamp);
     struct AggregatorItem {
@@ -12,23 +12,25 @@ contract AggregatorFactory is Owned {
      address aggregator;
     }
     mapping(string => AggregatorItem) private projectIds;
+    
+    function initialize (
+    ) external initializer{
+
+    }
+
     function createAggregator(string memory pId)
     external
-    returns (address)
     {
-        AggregatorItem memory item = projectIds[pId];
-        require(item.isInit == false, "project was created");
+        require(projectIds[pId].isInit == false, "project was created");
         address aggregatorObj = deployAggregator();
         projectIds[pId] = AggregatorItem(true, aggregatorObj);
         emit AggregatorCreated(pId, aggregatorObj, block.timestamp);
-        return address(aggregatorObj);
     }
     
     function updateAggregator(string memory pId)
     external
     returns (address) {
-        AggregatorItem memory item = projectIds[pId];
-        require(item.isInit == true, "pid is not exist");
+        require(projectIds[pId].isInit == true, "pid is not exist");
         address aggregatorObj = deployAggregator();
         projectIds[pId].aggregator = aggregatorObj;
         emit AggregatorUpdate(pId, aggregatorObj, block.timestamp);

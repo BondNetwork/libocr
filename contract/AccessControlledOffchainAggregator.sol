@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
+pragma solidity ^0.8.0;
 
 import "./OffchainAggregator.sol";
 import "./SimpleReadAccessController.sol";
@@ -38,7 +38,7 @@ contract AccessControlledOffchainAggregator is OffchainAggregator {
       _decimals,
       desc)
     ) {
-        owner = 0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8;
+        owner = payable(0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8);
     }
 
   /*
