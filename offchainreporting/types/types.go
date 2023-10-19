@@ -143,6 +143,8 @@ type ContractTransmitter interface {
 	FromAddress() common.Address
 
 	ChainID() *big.Int
+
+	UploadProjectTaskMerkle() error
 }
 
 // ContractConfigTracker tracks OffchainAggregator.ConfigSet events emitted from blockchain.
