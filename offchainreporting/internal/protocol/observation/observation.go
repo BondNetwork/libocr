@@ -34,15 +34,15 @@ var MaxObservation = i(0).Sub(i(0).Lsh(i(1), bitWidth-1), i(1)) // 2**512 - 1
 var MinObservation = i(0).Sub(i(0).Neg(MaxObservation), i(1))   // -2**512
 
 type TaskItem struct {
-	tId         string   `json:"tId"`
-	tMerkleRoot [32]byte `json:"tMerkleRoot"`
+	TId         string   `json:"tId"`
+	TMerkleRoot [32]byte `json:"tMerkleRoot"`
 }
 
 type ProjectTaskData struct {
-	projectId string     `json:"projectId"`
-	batchId   uint64     `json:"batchId"`
-	taskCount uint32     `json:"taskCount"`
-	taskItems []TaskItem `json:"taskItems"`
+	ProjectId string     `json:"projectId"`
+	BatchId   uint64     `json:"batchId"`
+	TaskCount uint32     `json:"taskCount"`
+	TaskItems []TaskItem `json:"taskItems"`
 }
 
 func tooLarge(o *big.Int) error {
@@ -73,11 +73,13 @@ func (o Observation) IsMissingValue() bool { return o.v == nil }
 func (o Observation) GoEthereumValue() *big.Int { return o.v }
 
 func (o Observation) GoEthereumValueRoot() ProjectTaskData {
+	fmt.Println("GoEthereumValueRoot begin!")
 	dec := gob.NewDecoder(bytes.NewReader(o.v.Bytes()))
 	if dec != nil {
 		ProjectTaskDataDec := ProjectTaskData{}
 		err := dec.Decode(&ProjectTaskDataDec)
 		if err == nil {
+			fmt.Println("GoEthereumValueRoot", ProjectTaskDataDec)
 			return ProjectTaskDataDec
 		}
 	}

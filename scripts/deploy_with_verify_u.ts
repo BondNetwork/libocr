@@ -1,28 +1,36 @@
 import { ethers } from "hardhat";
 import { deployWithVerify, waitForTx } from "./helpers/utils";
-import {deployProxy} from "./hardhatUpdate/utils"
+import {deployProxy, upgradeProxy} from "./hardhatUpdate/utils"
 import {verifyContract} from "./hardhatUpdate/utils"
 import hre from "hardhat";
 
 async function main() {
-    //await verifyContract("Params", "0xA85eAb3fEFC21cAFC0851CB493064bbaFb153eF3");
     const accounts = await ethers.getSigners();
     const options = {
       signer: accounts[0]
     };
-    /*const aggregatorFactory = await ethers.getContractFactory("AggregatorFactory", accounts[0]);
-    const aggregatorFactoryC = await deployWithVerify(await aggregatorFactory.deploy(), [], 'contract/AggregatorFactory.sol:AggregatorFactory');
-    console.log('AggregatorFactory address', aggregatorFactoryC.address);*/
 
-    const contractData = await deployProxy("AggregatorFactory",
+    /*const contractData = await deployProxy("AggregatorFactory",
       {
           options: options,
           args: [
           ]
       },
       true
-  );
-  console.log('Params address', contractData.address);
+    );
+    console.log('upgradeContractData address', contractData.address);*/
+
+    const upgradeContractData = await upgradeProxy(
+        "0xDc1716E795821b1b39ac912Bc180c8fd5A0404Ab",
+        "AggregatorFactory",
+        {
+            options: options,
+            args: [
+            ]
+        },
+        true
+    );
+  console.log('upgradeContractData address', upgradeContractData.address);
 }
 
 // We recommend this pattern to be able to use async/await everywhere

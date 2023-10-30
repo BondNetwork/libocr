@@ -135,7 +135,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
     virtual
     returns (string memory)
   {
-    return "OffchainAggregator 5.0.0";
+    return "OffchainAggregator 5.0.1";
   }
 
   /*
@@ -651,26 +651,24 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
       }
     }
 
-    { 
-      Transmission storage item = s_transmissions[r.hotVars.latestAggregatorRoundId];
-      {
-        ProjectTaskData  memory  root = r.observationsRoot[r.observationsRoot.length/2];
-        r.hotVars.latestAggregatorRoundId++;
-        for (uint32 i = 0; i < uint32(root.taskItems.length); i++) {
-          item.merkleRoot.taskItems.push(root.taskItems[i]);
-        }
-        item.merkleRoot.batchId = root.batchId;
-        item.merkleRoot.projectId = root.projectId;
-        item.merkleRoot.taskCount = root.taskCount;      
-        item.timestamp = uint64(block.timestamp);
+    {
+      r.hotVars.latestAggregatorRoundId++;
+      //Transmission storage item = s_transmissions[r.hotVars.latestAggregatorRoundId];
+      ProjectTaskData  memory  root = r.observationsRoot[r.observationsRoot.length/2];
+      /*for (uint32 i = 0; i < uint32(root.taskItems.length); i++) {
+        item.merkleRoot.taskItems.push(root.taskItems[i]);
       }
+      item.merkleRoot.batchId = root.batchId;
+      item.merkleRoot.projectId = root.projectId;
+      item.merkleRoot.taskCount = root.taskCount;
+      item.timestamp = uint64(block.timestamp);*/
 
-      //s_transmissions[r.hotVars.latestAggregatorRoundId] =
-      //  Transmission(root, uint64(block.timestamp));  
+      s_transmissions[r.hotVars.latestAggregatorRoundId] =
+      Transmission(root, uint64(block.timestamp));
 
       emit NewTransmission(
         r.hotVars.latestAggregatorRoundId,
-        item.merkleRoot.projectId,
+          root.projectId,
         msg.sender,
         r.observers,
         r.rawReportContext
@@ -683,7 +681,7 @@ contract OffchainAggregator is Owned, OffchainAggregatorBilling, AggregatorV2V3I
         block.timestamp
       );
       emit AnswerUpdated(
-        item.merkleRoot.batchId,
+        root.batchId,
         r.hotVars.latestAggregatorRoundId,
         block.timestamp
       );

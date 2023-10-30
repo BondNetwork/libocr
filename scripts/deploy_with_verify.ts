@@ -1,36 +1,24 @@
 import { ethers } from "hardhat";
 import { deployWithVerify, waitForTx } from "./helpers/utils";
+import {verifyContract} from "./hardhatUpdate/utils";
 
 async function main() {
     const accounts = await ethers.getSigners();
-    const aggregatorFactory = await ethers.getContractFactory("AggregatorFactory", accounts[0]);
-    const aggregatorFactoryC = await deployWithVerify(await aggregatorFactory.deploy(), [], 'contract/AggregatorFactory.sol:AggregatorFactory');
-    console.log('AggregatorFactory address', aggregatorFactoryC.address);
-    
-    /*const transparentUpgradeableProxy = await ethers.getContractFactory("TransparentUpgradeableProxy", accounts[0]);
-    const merkleDistributorFProxy = await deployWithVerify(
-      await transparentUpgradeableProxy.deploy(
-        aggregatorFactoryC.address,
-        "0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8",
-        [],
-      ),
-      [
-        aggregatorFactoryC.address,
-        "0xF4888aEd11bFA9ADcfa25B42E11Cb6E064A354b8",
-        [],
-      ],
-      'contract/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy'
-  );
-  console.log('merkleDistribmerkleDistributorFProxyutorF address', merkleDistributorFProxy.address);
-  */
-  /*const aggregatorFactoryObj = await ethers.getContractAt('AggregatorFactory', merkleDistributorFProxy.address, accounts[0]);
+    const options = {
+        signer: accounts[0]
+    };
+    //const aggregatorFactory = await ethers.getContractFactory("AggregatorFactory", accounts[0]);
+    //const aggregatorFactoryC = await deployWithVerify(await aggregatorFactory.deploy(), [], 'contract/AggregatorFactory.sol:AggregatorFactory');
+    //console.log('AggregatorFactory address', aggregatorFactoryC.address);
 
-  const tx = await aggregatorFactoryObj.createAggregator("zxc123456",{gasPrice:1000000000, gasLimit:210000});
-  const replicate = await tx.wait();
-  console.log('createagg tx', replicate);
-
-  const aaddress = await aggregatorFactoryObj.getAggregatorAddress("zxc123456");
-  console.log('createagg aaddress', aaddress);*/
+    await verifyContract("AccessControlledOffchainAggregator", "0x1be52A9F4d3115edE8c1772deFaAa463fFf433cA",
+        [2000, 1000, 102829, 6000, 3000,
+        "0x6c51561c4F5e4ba30209732FF7499a1e4AdE052e",
+        1,
+        95780971304118053647396689196894323976171195136475135,
+        "0x0000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000",
+        18, "BondOffchainAggregator"])
 }
 
 // We recommend this pattern to be able to use async/await everywhere

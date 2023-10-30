@@ -148,12 +148,12 @@ export async function upgradeProxy(
         proxyAddress,
         contractFactory,
         {
-            kind: "uups",
             unsafeAllow: ["external-library-linking"],
             redeployImplementation: 'always' ,
         });
-    await proxy.waitForDeployment();
-    const tmpProxyAddress = await proxy.getAddress();
+    //await proxy.waitForDeployment();
+    const proxyC = await proxy.deployed();
+    const tmpProxyAddress = await proxyC.address
     console.log(
         `upgrade proxy contract ${name} at proxy address ${tmpProxyAddress}`
     );
