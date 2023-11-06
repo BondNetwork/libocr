@@ -17,7 +17,7 @@ const (
 	// This is exported as serialization tests depend on it.
 	// NOTE: This is slightly larger than 2x of the largest message we can
 	// possibly send, assuming N=31.
-	MaxOCRMsgLength = 10000
+	MaxOCRMsgLength = 50000
 )
 
 func (o *ocr1BinaryNetworkEndpointFactory) NewEndpoint(

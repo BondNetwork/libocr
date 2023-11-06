@@ -225,30 +225,3 @@ func getReportTypes() abi.Arguments {
 		{Name: "observationsRoots", Type: projectTaskDataType},
 	})
 }
-
-/*type TaskItem struct {
-	TId         string   `json:"tId"`
-	TMerkleRoot [32]byte `json:"tMerkleRoot"`
-}
-
-type ProjectTaskData struct {
-	ProjectId string     `json:"projectId"`
-	BatchId   int64      `json:"batchId"`
-	TaskCount uint32     `json:"taskCount"`
-	TaskItems []TaskItem `json:"taskItems"`
-}*/
-
-func getSingleReportTypes() abi.Arguments {
-	projectTaskDataType, _ := abi.NewType("tuple", "struct ProjectTaskData", []abi.ArgumentMarshaling{
-		{Name: "projectId", Type: "string"},
-		{Name: "batchId", Type: "uint64"},
-		{Name: "taskCount", Type: "uint32"},
-		{Name: "taskItems", Type: "tuple[]", InternalType: "struct TaskItem", Components: []abi.ArgumentMarshaling{
-			{Name: "tId", Type: "string"},
-			{Name: "tMerkleRoot", Type: "byte32"}},
-		},
-	})
-	return abi.Arguments([]abi.Argument{
-		{Name: "projectTaskData", Type: projectTaskDataType},
-	})
-}
