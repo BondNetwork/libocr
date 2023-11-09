@@ -127,13 +127,13 @@ func ContractSetConfigArgsForIntegrationTest(
 	}
 	sharedConfig := config.SharedConfig{
 		config.PublicConfig{
-			3 * time.Minute,
+			2 * time.Hour,
 			15 * time.Second,
-			1 * time.Minute,
+			30 * time.Minute,
 			2 * time.Second,
-			1 * time.Minute,
+			1 * time.Hour,
 			alphaPPB,
-			10 * time.Second,
+			30 * time.Second,
 			3,
 			S,
 			identities,
